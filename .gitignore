@@ -1,0 +1,15 @@
+/target
+**/target/
+**/*.rs.bk
+coverage/
+lcov.info
+
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+
+.env
+.env.*
+!.env.example
+
+.DS_Store
