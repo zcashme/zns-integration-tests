@@ -65,8 +65,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: zcashme/zns-mint
-          # Pin until FakeTee merges; then switch to a tag or default branch.
-          ref: feat/fake-tee-trait-for-e2e
           path: zns-mint
 
       - name: Checkout zns-resolver
@@ -135,3 +133,80 @@ jobs:
           ZNS_RESOLVER_DIR: ${{ github.workspace }}/zns-resolver
           ZCASH_PARAMS_DIR: ${{ github.workspace }}/zcash-params
         run: cargo test --test spin_up -- --nocapture
+
+  claim:
+    name: claim
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    defaults:
+      run:
+        working-directory: zns-integration-tests
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: zns-integration-tests
+
+      - name: Checkout zns-mint
+        uses: actions/checkout@v4
+        with:
+          repository: zcashme/zns-mint
+          path: zns-mint
+
+      - name: Install protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo registry and target
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            zns-integration-tests
+            zns-mint
+
+      - name: Install zebrad
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          asset="zebrad-${ZEBRAD_VERSION}-x86_64-unknown-linux-gnu.tar.gz"
+          base="https://github.com/ZcashFoundation/zebra/releases/download/v${ZEBRAD_VERSION}"
+          curl -fsSL -O "${base}/${asset}"
+          curl -fsSL -O "${base}/${asset}.sha256"
+          sha256sum -c "${asset}.sha256"
+          tar -xzf "${asset}"
+          bin="$(find . -maxdepth 3 -type f -name zebrad | head -n 1)"
+          test -n "$bin"
+          chmod +x "$bin"
+          echo "ZEBRAD_BIN=${GITHUB_WORKSPACE}/${bin#./}" >> "$GITHUB_ENV"
+
+      - name: Cache Sapling params
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/zcash-params
+          key: sapling-params-spend-47958396-output-3592860
+
+      - name: Fetch Sapling params
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          mkdir -p zcash-params
+          base="https://download.z.cash/downloads"
+          spend="zcash-params/sapling-spend.params"
+          output="zcash-params/sapling-output.params"
+          if [[ ! -f "$spend" || "$(stat -c%s "$spend")" -ne 47958396 ]]; then
+            curl -L --fail -o "$spend" "${base}/sapling-spend.params"
+          fi
+          if [[ ! -f "$output" || "$(stat -c%s "$output")" -ne 3592860 ]]; then
+            curl -L --fail -o "$output" "${base}/sapling-output.params"
+          fi
+          test "$(stat -c%s "$spend")" -eq 47958396
+          test "$(stat -c%s "$output")" -eq 3592860
+
+      - name: claim
+        env:
+          ZNS_MINT_DIR: ${{ github.workspace }}/zns-mint
+          ZCASH_PARAMS_DIR: ${{ github.workspace }}/zcash-params
+        run: cargo test --test claim -- --nocapture

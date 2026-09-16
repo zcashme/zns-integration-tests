@@ -26,6 +26,7 @@ transparent = { package = "zcash_transparent", version = "0.10.0", default-featu
 zcash_keys = { version = "0.16.1", default-features = false, features = ["orchard", "sapling", "transparent-inputs"] }
 zcash_primitives = { version = "0.30.0", default-features = false, features = ["std", "circuits", "multicore", "transparent-inputs", "unsafe-zns"] }
 zcash_protocol = { version = "0.10.4", default-features = false, features = ["local-consensus"] }
+zcash_note_encryption = "0.4"
 zip32 = "0.2.1"
 
 [patch.crates-io]

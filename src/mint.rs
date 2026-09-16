@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
 use tempfile::TempDir;
@@ -49,6 +49,10 @@ impl Mint {
 
         let child = Command::new(&bin)
             .current_dir(dir.path())
+            .env(
+                "RUST_LOG",
+                std::env::var("RUST_LOG").unwrap_or_else(|_| "zns_mint=debug".into()),
+            )
             .stdout(Stdio::from(file))
             .stderr(Stdio::from(file2))
             .spawn()
@@ -75,6 +79,30 @@ impl Mint {
 
     pub fn log_text(&self) -> String {
         self.child.log_text()
+    }
+
+    /// Boot finished and the run loop is waiting for tips (`live_from` is set).
+    pub async fn wait_until_live(&mut self) -> Result<()> {
+        let deadline = Instant::now() + Duration::from_secs(300);
+        loop {
+            let log = self.log_text();
+            if log.contains("mint awaiting Zebra tips") {
+                return Ok(());
+            }
+            if log.contains("FATAL") {
+                bail!("mint fatal during boot:\n{}", self.exit_detail());
+            }
+            if !self.is_running() {
+                bail!("mint exited before becoming live:\n{}", self.exit_detail());
+            }
+            if Instant::now() >= deadline {
+                bail!(
+                    "mint did not reach run loop within 300s:\n{}",
+                    self.exit_detail()
+                );
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
     }
 }
 

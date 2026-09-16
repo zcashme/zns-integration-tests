@@ -41,7 +41,7 @@ pub const COINBASE_MATURITY: u32 = 100;
 /// Blocks to mine so NU6.3 is active and at least one coinbase is mature.
 pub const FIXTURE_HEIGHT: u32 = NU6_3_ACTIVATION_HEIGHT + COINBASE_MATURITY;
 
-const DEV_SEED: [u8; 32] = [0u8; 32];
+pub(crate) const DEV_SEED: [u8; 32] = [0u8; 32];
 
 /// Same LocalNetwork as mint `boot.rs` `regtest_network()`.
 pub fn regtest_network() -> LocalNetwork {
@@ -65,7 +65,7 @@ pub fn regtest_network() -> LocalNetwork {
 /// Point zebrad `miner_address` here so coinbase is spendable.
 pub fn miner_address() -> Result<String> {
     let network = regtest_network();
-    let (addr, _) = miner_taddr(&network)?;
+    let (addr, _) = taddr_for_seed(&network, &DEV_SEED)?;
     Ok(encode_transparent_address_p(&network, &addr))
 }
 
@@ -73,9 +73,9 @@ pub fn miner_address() -> Result<String> {
 /// Registry outputs + a Treasury note covering the remainder after ZIP-317.
 pub async fn publish(zebra: &mut Zebrad) -> Result<()> {
     let network = regtest_network();
-    let (taddr, child) = miner_taddr(&network)?;
-    let treasury_usk = account_usk(&network, 0)?;
-    let registry_usk = account_usk(&network, 1)?;
+    let (taddr, child) = taddr_for_seed(&network, &DEV_SEED)?;
+    let treasury_usk = account_usk(&network, &DEV_SEED, 0)?;
+    let registry_usk = account_usk(&network, &DEV_SEED, 1)?;
 
     let tip = zebra.tip_height().await?;
     if tip < FIXTURE_HEIGHT {
@@ -127,31 +127,55 @@ pub async fn publish(zebra: &mut Zebrad) -> Result<()> {
     Ok(())
 }
 
-fn account_usk(network: &LocalNetwork, account: u32) -> Result<UnifiedSpendingKey> {
+pub(crate) fn account_usk(
+    network: &LocalNetwork,
+    seed: &[u8; 32],
+    account: u32,
+) -> Result<UnifiedSpendingKey> {
     UnifiedSpendingKey::from_seed(
         network,
-        &DEV_SEED,
+        seed,
         AccountId::try_from(account).expect("account 0/1"),
     )
     .map_err(|e| anyhow!("ZIP-32 USK account {account}: {e}"))
 }
 
-fn miner_taddr(network: &LocalNetwork) -> Result<(TransparentAddress, NonHardenedChildIndex)> {
-    let usk = account_usk(network, 0)?;
+pub(crate) fn taddr_for_seed(
+    network: &LocalNetwork,
+    seed: &[u8; 32],
+) -> Result<(TransparentAddress, NonHardenedChildIndex)> {
+    let usk = account_usk(network, seed, 0)?;
     Ok(usk
         .transparent()
         .to_account_pubkey()
         .derive_external_ivk()
-        .map_err(|e| anyhow!("treasury external IVK: {e}"))?
+        .map_err(|e| anyhow!("external IVK: {e}"))?
         .default_address())
 }
 
-struct Coin {
-    outpoint: OutPoint,
-    coin: transparent::bundle::TxOut,
+/// Treasury orchard UA (all-zero seed, account 0, j=0 external) on regtest.
+pub fn treasury_ua() -> Result<String> {
+    orchard_ua(&regtest_network(), &DEV_SEED)
 }
 
-async fn collect_mature_coinbase(
+pub(crate) fn orchard_ua(network: &LocalNetwork, seed: &[u8; 32]) -> Result<String> {
+    let usk = account_usk(network, seed, 0)?;
+    let fvk = orchard::keys::FullViewingKey::from(usk.orchard());
+    zcash_keys::address::UnifiedAddress::from_receivers(
+        Some(fvk.address_at(0u32, orchard::keys::Scope::External)),
+        None,
+        None,
+    )
+    .ok_or_else(|| anyhow!("orchard-only UA"))
+    .map(|ua| ua.encode(network))
+}
+
+pub(crate) struct Coin {
+    pub outpoint: OutPoint,
+    pub coin: transparent::bundle::TxOut,
+}
+
+pub(crate) async fn collect_mature_coinbase(
     zebra: &Zebrad,
     network: &LocalNetwork,
     miner: &TransparentAddress,
@@ -306,7 +330,7 @@ fn build_ceremony_tx(
 }
 
 /// Sapling proving keys are unused: this tx is transparent + Ironwood only.
-struct NoSapling;
+pub(crate) struct NoSapling;
 
 impl SpendProver for NoSapling {
     type Proof = ();

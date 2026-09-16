@@ -29,6 +29,7 @@ pub struct Zebrad {
     bin: PathBuf,
     config_path: PathBuf,
     log_path: PathBuf,
+    net_port: u16,
     pub rpc_port: u16,
     pub indexer_port: u16,
     _dir: tempfile::TempDir,
@@ -74,6 +75,7 @@ impl Zebrad {
             bin: bin.to_path_buf(),
             config_path,
             log_path,
+            net_port,
             rpc_port: ZEBRA_JSON_RPC_PORT,
             indexer_port: ZEBRA_INDEXER_PORT,
             _dir: dir,
@@ -142,6 +144,60 @@ impl Zebrad {
         let child = spawn_zebrad(&self.bin, &self.config_path, &self.log_path)?;
         self.child = ChildProcess::new("zebrad", child, Some(self.log_path.clone()));
         self.wait_until_rpc_up().await
+    }
+
+    /// Stop, rewrite `miner_address`, restart with the same chain state.
+    ///
+    /// Call this before mint is running: mint's tip stream dies across a
+    /// zebra restart.
+    pub async fn restart_with_miner(&mut self, miner_address: &str) -> Result<()> {
+        let _ = self.rpc("stop", json!([])).await;
+        let deadline = Instant::now() + Duration::from_secs(60);
+        while self.child.is_running() && Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+        if self.child.is_running() {
+            self.child.kill_and_reap();
+        }
+        let cache_dir = self._dir.path().join("state");
+        std::fs::write(
+            &self.config_path,
+            zebrad_toml(
+                self.net_port,
+                self.rpc_port,
+                self.indexer_port,
+                miner_address,
+                &cache_dir.to_string_lossy(),
+            ),
+        )
+        .context("rewrite zebrad.toml for miner change")?;
+        let child = spawn_zebrad(&self.bin, &self.config_path, &self.log_path)?;
+        self.child = ChildProcess::new("zebrad", child, Some(self.log_path.clone()));
+        self.wait_until_rpc_up().await
+    }
+
+    /// Ironwood note-commitment tree root at the current tip.
+    pub async fn ironwood_anchor(&self) -> Result<orchard::Anchor> {
+        let height = self.tip_height().await?;
+        let state = self
+            .rpc("z_gettreestate", json!([height.to_string()]))
+            .await
+            .context("z_gettreestate")?;
+        let hex = state
+            .pointer("/ironwood/commitments/finalState")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow!("z_gettreestate missing ironwood finalState: {state}"))?;
+        if hex.is_empty() {
+            return Ok(orchard::Anchor::empty_tree());
+        }
+        let bytes = hex::decode(hex).context("ironwood finalState hex")?;
+        let tree = zcash_primitives::merkle_tree::read_commitment_tree::<
+            orchard::tree::MerkleHashOrchard,
+            _,
+            32,
+        >(&bytes[..])
+        .context("decode ironwood commitment tree")?;
+        Ok(orchard::Anchor::from(tree.to_frontier().root()))
     }
 }
 

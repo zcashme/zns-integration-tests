@@ -17,8 +17,11 @@ That first Ironwood bundle is 42 actions (proving takes a couple of minutes).
 ```sh
 export ZEBRAD_BIN=/path/to/zebrad
 cargo test --test spin_up -- --nocapture
+cargo test --test claim -- --nocapture
 ```
 
+`claim` funds a second ZIP-32 user (not the mint seed), pays the Treasury
+`ZNS:claim:alice:<user UA>`, and waits for mint to submit the Name Note.
 Skips locally if `zebrad` is missing; CI requires `$ZEBRAD_BIN`.
 CI downloads Sapling params into `$ZCASH_PARAMS_DIR`. Locally, put
 `sapling-spend.params` and `sapling-output.params` in `~/.zcash-params`
