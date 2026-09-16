@@ -3,7 +3,6 @@
 # The spin-up job publishes a FakeTee ceremony + Treasury, installs Sapling
 # params, and runs mint. Price fetch uses live HTTPS.
 name: CI
-name: CI
 
 on:
   push:
