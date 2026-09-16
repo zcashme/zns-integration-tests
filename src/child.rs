@@ -34,17 +34,30 @@ impl ChildProcess {
         }
     }
 
+    pub fn log_text(&self) -> String {
+        match &self.stderr_path {
+            Some(path) => std::fs::read_to_string(path).unwrap_or_default(),
+            None => String::new(),
+        }
+    }
+
     pub fn exit_detail(&self) -> String {
         let status = match self.exit {
             Some(s) => s.to_string(),
             None => "still running".to_string(),
         };
-        match &self.stderr_path {
-            Some(path) => {
-                let tail = std::fs::read_to_string(path).unwrap_or_default();
-                format!("{}: {status}\n{}", self.name, tail_lines(&tail, 40))
-            }
-            None => format!("{}: {status}", self.name),
+        let tail = tail_lines(&self.log_text(), 40);
+        if tail.is_empty() {
+            format!("{}: {status}", self.name)
+        } else {
+            format!("{}: {status}\n{tail}", self.name)
+        }
+    }
+
+    pub fn kill_and_reap(&mut self) {
+        let _ = self.child.kill();
+        if let Ok(status) = self.child.wait() {
+            self.exit = Some(status);
         }
     }
 }

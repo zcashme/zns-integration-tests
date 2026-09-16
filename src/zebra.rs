@@ -1,7 +1,7 @@
 //! Local `zebrad` in Regtest, pinned to the mint's NU schedule and ports.
 
 use std::net::TcpListener;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -26,6 +26,9 @@ const DEFAULT_MINER_ADDRESS: &str = "t27eWDgjFYJGVXmzrXeVjnb5J3uXDM9xH9v";
 /// A running `zebrad` Regtest node.
 pub struct Zebrad {
     child: ChildProcess,
+    bin: PathBuf,
+    config_path: PathBuf,
+    log_path: PathBuf,
     pub rpc_port: u16,
     pub indexer_port: u16,
     _dir: tempfile::TempDir,
@@ -33,12 +36,21 @@ pub struct Zebrad {
 
 impl Zebrad {
     pub async fn start() -> Result<Self> {
+        Self::start_with_miner(DEFAULT_MINER_ADDRESS).await
+    }
+
+    /// Start zebrad paying coinbase to `miner_address` (regtest t-addr).
+    pub async fn start_with_miner(miner_address: &str) -> Result<Self> {
         let bin =
             zebrad_bin().context("zebrad not found — set ZEBRAD_BIN or put zebrad on PATH")?;
-        Self::start_with_bin(&bin).await
+        Self::start_with_bin_and_miner(&bin, miner_address).await
     }
 
     pub async fn start_with_bin(bin: &Path) -> Result<Self> {
+        Self::start_with_bin_and_miner(bin, DEFAULT_MINER_ADDRESS).await
+    }
+
+    pub async fn start_with_bin_and_miner(bin: &Path, miner_address: &str) -> Result<Self> {
         let dir = tempfile::tempdir().context("create zebrad dir")?;
         let net_port = pick_port()?;
         let config_path = dir.path().join("zebrad.toml");
@@ -49,16 +61,19 @@ impl Zebrad {
                 net_port,
                 ZEBRA_JSON_RPC_PORT,
                 ZEBRA_INDEXER_PORT,
-                DEFAULT_MINER_ADDRESS,
+                miner_address,
                 &cache_dir.to_string_lossy(),
             ),
         )
         .context("write zebrad.toml")?;
 
-        let log = dir.path().join("zebrad.stderr");
-        let child = spawn_zebrad(bin, &config_path, &log)?;
+        let log_path = dir.path().join("zebrad.stderr");
+        let child = spawn_zebrad(bin, &config_path, &log_path)?;
         let mut zebrad = Zebrad {
-            child: ChildProcess::new("zebrad", child, Some(log)),
+            child: ChildProcess::new("zebrad", child, Some(log_path.clone())),
+            bin: bin.to_path_buf(),
+            config_path,
+            log_path,
             rpc_port: ZEBRA_JSON_RPC_PORT,
             indexer_port: ZEBRA_INDEXER_PORT,
             _dir: dir,
@@ -101,6 +116,33 @@ impl Zebrad {
         }
         Ok(())
     }
+
+    pub async fn tip_height(&self) -> Result<u32> {
+        let info = self
+            .rpc("getblockchaininfo", json!([]))
+            .await
+            .context("getblockchaininfo")?;
+        info.get("blocks")
+            .and_then(|b| b.as_u64())
+            .map(|h| h as u32)
+            .ok_or_else(|| anyhow!("getblockchaininfo missing blocks: {info}"))
+    }
+
+    /// Halo2 proving can take long enough that zebrad has exited; reload the
+    /// same `cache_dir` and wait for RPC.
+    pub async fn ensure_rpc(&mut self) -> Result<()> {
+        if self.rpc("getblockchaininfo", json!([])).await.is_ok() {
+            return Ok(());
+        }
+        eprintln!(
+            "zebrad RPC down ({}); restarting with the same state",
+            self.child.exit_detail()
+        );
+        self.child.kill_and_reap();
+        let child = spawn_zebrad(&self.bin, &self.config_path, &self.log_path)?;
+        self.child = ChildProcess::new("zebrad", child, Some(self.log_path.clone()));
+        self.wait_until_rpc_up().await
+    }
 }
 
 fn spawn_zebrad(bin: &Path, config_path: &Path, stderr_path: &Path) -> Result<Child> {
@@ -113,6 +155,7 @@ fn spawn_zebrad(bin: &Path, config_path: &Path, stderr_path: &Path) -> Result<Ch
         }
     }
     cmd.args(["--config", config_path.to_str().unwrap(), "start"])
+        .stdin(Stdio::null())
         .stdout(Stdio::from(log))
         .stderr(Stdio::from(log2))
         .spawn()
