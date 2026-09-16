@@ -1,0 +1,113 @@
+# Lint this crate; spin up zebrad + mint + resolver on PRs and main.
+#
+# Mint is allowed to exit: empty regtest has no 40-note ceremony pool yet.
+# This job asserts zebra JSON-RPC and resolver `status`, not a live mint.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  ZEBRAD_VERSION: "6.3.0"
+
+jobs:
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: zns-integration-tests
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: zns-integration-tests
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo registry and target
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: zns-integration-tests
+
+      - name: rustfmt
+        run: cargo fmt --check
+
+      - name: clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: test (lib; spin_up skips without zebrad)
+        run: cargo test --lib
+
+  spin-up:
+    name: spin-up
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    defaults:
+      run:
+        working-directory: zns-integration-tests
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: zns-integration-tests
+
+      - name: Checkout zns-mint
+        uses: actions/checkout@v4
+        with:
+          repository: zcashme/zns-mint
+          # Pin until FakeTee merges; then switch to a tag or default branch.
+          ref: feat/fake-tee-trait-for-e2e
+          path: zns-mint
+
+      - name: Checkout zns-resolver
+        uses: actions/checkout@v4
+        with:
+          repository: zcashme/zns-resolver
+          path: zns-resolver
+
+      - name: Install protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo registry and target
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            zns-integration-tests
+            zns-mint
+            zns-resolver
+
+      - name: Install zebrad
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          asset="zebrad-${ZEBRAD_VERSION}-x86_64-unknown-linux-gnu.tar.gz"
+          base="https://github.com/ZcashFoundation/zebra/releases/download/v${ZEBRAD_VERSION}"
+          curl -fsSL -O "${base}/${asset}"
+          curl -fsSL -O "${base}/${asset}.sha256"
+          sha256sum -c "${asset}.sha256"
+          tar -xzf "${asset}"
+          bin="$(find . -maxdepth 3 -type f -name zebrad | head -n 1)"
+          test -n "$bin"
+          chmod +x "$bin"
+          echo "ZEBRAD_BIN=${GITHUB_WORKSPACE}/${bin#./}" >> "$GITHUB_ENV"
+
+      - name: spin_up
+        env:
+          ZNS_MINT_DIR: ${{ github.workspace }}/zns-mint
+          ZNS_RESOLVER_DIR: ${{ github.workspace }}/zns-resolver
+        run: cargo test --test spin_up -- --nocapture

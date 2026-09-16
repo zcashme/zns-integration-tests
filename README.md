@@ -1,29 +1,23 @@
 # zns-integration-tests
 
-End-to-end tests for the Zcash Name Service (ZNS) stack: mint, verify, and
-resolver, checked against the whitepaper.
+Local process harness for the Zcash Name Service: `zebrad` (regtest),
+[`zns-mint`](https://github.com/zcashme/zns-mint), and
+[`zns-resolver`](https://github.com/zcashme/zns-resolver).
 
-This harness exercises protocol behavior that the component repos cannot cover
-alone — claim / update / release flows, Name Note verification, and name → UA
-resolution — without running a TEE.
+`Stack::start()` launches all three. Mint is built with
+`--features regtest,fake-tee` from `../zns-mint` (override with
+`$ZNS_MINT_DIR` / `$ZNS_MINT_BIN`). If no capsule is provided, the harness
+runs mint's `write_fake_capsule` example (FakeTee, all-zero seed).
 
-## In scope
+```sh
+export ZEBRAD_BIN=/path/to/zebrad
+cargo test --test spin_up -- --nocapture
+```
 
-| Repo | Role |
-|---|---|
-| [zns-mint](https://github.com/zcashme/zns-mint) | Issues Name Notes (claim, update, release) |
-| [zns-verify](https://github.com/zcashme/zns-verify) | Recomputes Name Note commitments; shared verification kernel |
-| [zns-resolver](https://github.com/zcashme/zns-resolver) | Indexes verified bindings and serves name → UA lookup |
-| [zns-whitepaper](https://github.com/zcashme/zns-whitepaper) | Normative protocol; tests assert documented rules |
+Skips locally if `zebrad` is missing; CI requires `$ZEBRAD_BIN`.
 
-## Out of scope
-
-TEE / SEV-SNP attestation, capsule decrypt, and mint boot-in-enclave. Those
-belong in `zns-mint`. This repo assumes a local, non-attested mint.
-
-## Status
-
-Scaffold only. The test harness is not in this commit.
+TODO: create the 40-note Registry ceremony (and fund Treasury) on the
+regtest chain before mint starts, so mint can finish boot.
 
 ## License
 
