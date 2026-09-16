@@ -1,7 +1,7 @@
 use anyhow::{bail, Result};
 use zns_integration_tests::{zebrad_bin, Stack};
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn spin_up_zebra_mint_resolver() -> Result<()> {
     if zebrad_bin().is_none() {
         if std::env::var_os("CI").is_some() {
@@ -17,9 +17,10 @@ async fn spin_up_zebra_mint_resolver() -> Result<()> {
         .zebra
         .rpc("getblockchaininfo", serde_json::json!([]))
         .await?;
+    let height = info.get("blocks").and_then(|b| b.as_u64()).unwrap_or(0);
     assert!(
-        info.get("blocks").and_then(|b| b.as_u64()).unwrap_or(0) >= 4,
-        "zebra should be at NU6.3 (height 4+), got {info}"
+        height >= 105,
+        "zebra should be past ceremony confirm (height 105+), got {info}"
     );
 
     let status = stack.resolver.status().await?;
@@ -30,10 +31,23 @@ async fn spin_up_zebra_mint_resolver() -> Result<()> {
 
     assert!(stack.resolver.is_running(), "resolver process died");
 
+    let log = stack.mint.log_text();
+    if log.contains("anchor lineage pool expected") || log.contains("Treasury balance") {
+        bail!(
+            "ceremony fixture failed; mint still missing anchors or treasury:\n{}",
+            stack.mint.exit_detail()
+        );
+    }
+
     if !stack.mint.is_running() {
-        // TODO: fail this test once the ceremony notes exist and mint stays up.
+        if std::env::var_os("CI").is_some() {
+            bail!(
+                "mint exited in CI (ceremony, params, and price should succeed):\n{}",
+                stack.mint.exit_detail()
+            );
+        }
         eprintln!(
-            "mint is not running (TODO: 40-note Registry ceremony): {}",
+            "mint is not running (need sapling params in ~/.zcash-params): {}",
             stack.mint.exit_detail()
         );
     }

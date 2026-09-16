@@ -9,15 +9,20 @@ Local process harness for the Zcash Name Service: `zebrad` (regtest),
 `$ZNS_MINT_DIR` / `$ZNS_MINT_BIN`). If no capsule is provided, the harness
 runs mint's `write_fake_capsule` example (FakeTee, all-zero seed).
 
+Before mint starts, the harness mines 104 blocks and publishes a **dev**
+ceremony: 40 zero-value Registry Ironwood notes plus a Treasury Ironwood
+note, funded from coinbase paid to the all-zero-seed Treasury t-addr.
+That first Ironwood bundle is 42 actions (proving takes a couple of minutes).
+
 ```sh
 export ZEBRAD_BIN=/path/to/zebrad
 cargo test --test spin_up -- --nocapture
 ```
 
 Skips locally if `zebrad` is missing; CI requires `$ZEBRAD_BIN`.
-
-TODO: create the 40-note Registry ceremony (and fund Treasury) on the
-regtest chain before mint starts, so mint can finish boot.
+CI downloads Sapling params into `$ZCASH_PARAMS_DIR`. Locally, put
+`sapling-spend.params` and `sapling-output.params` in `~/.zcash-params`
+(from https://download.z.cash/downloads/).
 
 ## License
 

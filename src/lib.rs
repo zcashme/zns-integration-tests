@@ -1,6 +1,7 @@
 //! Cross-stack process harness for ZNS integration tests.
 
 mod binaries;
+mod ceremony;
 mod child;
 mod mint;
 mod resolver;

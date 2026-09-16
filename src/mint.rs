@@ -60,9 +60,8 @@ impl Mint {
         };
 
         // Mint has no boot probe until after `Boot::start` (metrics bind on
-        // :9464). Settle long enough to catch immediate panics.
-        // TODO: mint stays up only after the 40-note ceremony is on chain.
-        tokio::time::sleep(Duration::from_secs(2)).await;
+        // :9464). Give it time to sync ~104 blocks and hit genesis checks.
+        tokio::time::sleep(Duration::from_secs(15)).await;
         Ok(mint)
     }
 
@@ -72,6 +71,10 @@ impl Mint {
 
     pub fn exit_detail(&self) -> String {
         self.child.exit_detail()
+    }
+
+    pub fn log_text(&self) -> String {
+        self.child.log_text()
     }
 }
 

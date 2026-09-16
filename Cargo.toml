@@ -9,7 +9,39 @@ description = "Cross-stack harness for ZNS: zebra, mint, resolver"
 
 [dependencies]
 anyhow = "1"
+hex = "0.4"
+rand = "0.8"
 reqwest = { version = "0.12", default-features = false, features = ["json", "default-tls"] }
+secp256k1 = "0.29"
+bls12_381 = "0.8"
+jubjub = "0.10"
 serde_json = "1"
 tempfile = "3"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
+
+# Same ZNS Ironwood graph as zns-mint (patched orchard + zcash_primitives).
+orchard = { version = "0.15.5", default-features = false, features = ["unsafe-zns", "circuit", "multicore"] }
+sapling = { package = "sapling-crypto", version = "0.7", default-features = false, features = ["circuit"] }
+transparent = { package = "zcash_transparent", version = "0.10.0", default-features = false, features = ["transparent-inputs"] }
+zcash_keys = { version = "0.16.1", default-features = false, features = ["orchard", "sapling", "transparent-inputs"] }
+zcash_primitives = { version = "0.30.0", default-features = false, features = ["std", "circuits", "multicore", "transparent-inputs", "unsafe-zns"] }
+zcash_protocol = { version = "0.10.4", default-features = false, features = ["local-consensus"] }
+zip32 = "0.2.1"
+
+[patch.crates-io]
+orchard = { git = "https://github.com/zcashme/orchard.git", tag = "zns-orchard-v0.15.5.2" }
+zcash_primitives = { git = "https://github.com/zcashme/zns-zcash_primitives.git", tag = "zns-zcash_primitives-v0.30.1.2" }
+
+# Debug Halo2 is too slow for a 42-action Ironwood bundle.
+[profile.dev.package.orchard]
+opt-level = 3
+[profile.dev.package.halo2_proofs]
+opt-level = 3
+[profile.dev.package.halo2_gadgets]
+opt-level = 3
+[profile.test.package.orchard]
+opt-level = 3
+[profile.test.package.halo2_proofs]
+opt-level = 3
+[profile.test.package.halo2_gadgets]
+opt-level = 3

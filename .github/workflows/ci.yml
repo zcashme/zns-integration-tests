@@ -1,7 +1,8 @@
 # Lint this crate; spin up zebrad + mint + resolver on PRs and main.
 #
-# Mint is allowed to exit: empty regtest has no 40-note ceremony pool yet.
-# This job asserts zebra JSON-RPC and resolver `status`, not a live mint.
+# The spin-up job publishes a FakeTee ceremony + Treasury, installs Sapling
+# params, and runs mint. Price fetch uses live HTTPS.
+name: CI
 name: CI
 
 on:
@@ -21,7 +22,7 @@ jobs:
   test:
     name: test
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 45
     defaults:
       run:
         working-directory: zns-integration-tests
@@ -106,8 +107,32 @@ jobs:
           chmod +x "$bin"
           echo "ZEBRAD_BIN=${GITHUB_WORKSPACE}/${bin#./}" >> "$GITHUB_ENV"
 
+      - name: Cache Sapling params
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/zcash-params
+          key: sapling-params-spend-47958396-output-3592860
+
+      - name: Fetch Sapling params
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          mkdir -p zcash-params
+          base="https://download.z.cash/downloads"
+          spend="zcash-params/sapling-spend.params"
+          output="zcash-params/sapling-output.params"
+          if [[ ! -f "$spend" || "$(stat -c%s "$spend")" -ne 47958396 ]]; then
+            curl -L --fail -o "$spend" "${base}/sapling-spend.params"
+          fi
+          if [[ ! -f "$output" || "$(stat -c%s "$output")" -ne 3592860 ]]; then
+            curl -L --fail -o "$output" "${base}/sapling-output.params"
+          fi
+          test "$(stat -c%s "$spend")" -eq 47958396
+          test "$(stat -c%s "$output")" -eq 3592860
+
       - name: spin_up
         env:
           ZNS_MINT_DIR: ${{ github.workspace }}/zns-mint
           ZNS_RESOLVER_DIR: ${{ github.workspace }}/zns-resolver
+          ZCASH_PARAMS_DIR: ${{ github.workspace }}/zcash-params
         run: cargo test --test spin_up -- --nocapture
