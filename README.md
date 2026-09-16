@@ -6,8 +6,8 @@ Local process harness for the Zcash Name Service: `zebrad` (regtest),
 
 `Stack::start()` launches all three. Mint is built with
 `--features regtest,fake-tee` from `../zns-mint` (override with
-`$ZNS_MINT_DIR` / `$ZNS_MINT_BIN`). A seed capsule is copied from
-`$ZNS_SEED_CAPSULE` or `zns-mint/keys/zns_seed.capsule` when present.
+`$ZNS_MINT_DIR` / `$ZNS_MINT_BIN`). If no capsule is provided, the harness
+runs mint's `write_fake_capsule` example (FakeTee, all-zero seed).
 
 ```sh
 export ZEBRAD_BIN=/path/to/zebrad
