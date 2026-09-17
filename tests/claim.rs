@@ -34,13 +34,15 @@ async fn happy_path_claim_alice() -> Result<()> {
     let mint_bin = mint_build.await.expect("mint build task")?;
     let mut mint = Mint::start(mint_bin).await?;
     mint.wait_until_live().await?;
+    // New tip so mint's run loop can submit the ceremony vault sweep.
+    zebra.generate_blocks(1).await?;
 
     let sweep_deadline = Instant::now() + Duration::from_secs(300);
     loop {
         if !mint.is_running() {
             bail!("mint died during vault sweep:\n{}", mint.log_text());
         }
-        if mint.log_text().contains("Ironwood vault sweep") {
+        if mint_submitted_vault_sweep(&mint.log_text()) {
             break;
         }
         if Instant::now() >= sweep_deadline {
@@ -67,10 +69,10 @@ async fn happy_path_claim_alice() -> Result<()> {
             bail!("mint died while settling claim:\n{}", mint.log_text());
         }
         let log = mint.log_text();
-        if log.contains("registration rejected") && log.contains("alice") {
+        if mint_rejected_name_note(&log, "alice") {
             bail!("mint rejected alice registration:\n{log}");
         }
-        if log.contains("registration in flight") && log.contains("alice") {
+        if mint_name_note_in_flight(&log, "alice") {
             eprintln!("mint settled alice");
             let expected_txid = registration_txid(&log, "alice");
             let scan_from = zebra.tip_height().await?;
@@ -112,4 +114,18 @@ async fn happy_path_claim_alice() -> Result<()> {
             poked = 1;
         }
     }
+}
+
+fn mint_submitted_vault_sweep(log: &str) -> bool {
+    log.contains("vault sweep") && (log.contains("submitted") || log.contains("Ironwood"))
+}
+
+fn mint_name_note_in_flight(log: &str, name: &str) -> bool {
+    log.contains(name)
+        && (log.contains("NameNote order in flight") || log.contains("registration in flight"))
+}
+
+fn mint_rejected_name_note(log: &str, name: &str) -> bool {
+    log.contains(name)
+        && (log.contains("NameNote submission rejected") || log.contains("registration rejected"))
 }

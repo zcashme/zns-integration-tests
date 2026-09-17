@@ -154,10 +154,12 @@ async fn scan_block(zebra: &Zebrad, height: u32) -> Result<Vec<VerifiedNameNote>
     Ok(found)
 }
 
-/// `txid=` on the mint line that reports the registration is in flight.
+/// `txid=` on the mint line that reports the Name Note is in flight.
 pub fn registration_txid(log: &str, name: &str) -> Option<String> {
     for line in log.lines() {
-        if !(line.contains("registration in flight") && line.contains(name)) {
+        let in_flight =
+            line.contains("NameNote order in flight") || line.contains("registration in flight");
+        if !(in_flight && line.contains(name)) {
             continue;
         }
         let rest = line.split("txid=").nth(1)?;
@@ -207,7 +209,7 @@ mod tests {
 
     #[test]
     fn registration_txid_from_tracing_line() {
-        let log = "2026-09-16T18:56:01Z  INFO zns_mint: registration in flight name=alice txid=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let log = "2026-09-17T11:28:01Z  INFO zns_mint: NameNote order in flight name=alice action=claim txid=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
         assert_eq!(
             registration_txid(log, "alice").as_deref(),
             Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
