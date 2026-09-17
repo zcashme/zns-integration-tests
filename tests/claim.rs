@@ -1,10 +1,12 @@
-//! Happy-path claim: user pays Treasury `ZNS:claim:alice:<ua>`, mint registers.
+//! Happy-path claim: user pays Treasury `ZNS:claim:alice:<ua>`, mint registers,
+//! then `zns-verify` checks the on-chain Name Note.
 
 use std::time::{Duration, Instant};
 
 use anyhow::{bail, Result};
 use zns_integration_tests::{
-    fund_user, miner_address, pay_claim, publish, zebrad_bin, Mint, User, Zebrad, FIXTURE_HEIGHT,
+    fund_user, miner_address, pay_claim, publish, registration_txid, registry_commitment_keys,
+    wait_for_verified_name_note, zebrad_bin, Mint, User, Zebrad, FIXTURE_HEIGHT,
 };
 
 #[tokio::test(flavor = "multi_thread")]
@@ -70,6 +72,29 @@ async fn happy_path_claim_alice() -> Result<()> {
         }
         if log.contains("registration in flight") && log.contains("alice") {
             eprintln!("mint settled alice");
+            let expected_txid = registration_txid(&log, "alice");
+            let scan_from = zebra.tip_height().await?;
+            let note = wait_for_verified_name_note(&zebra, &mut mint, "alice", scan_from).await?;
+            eprintln!(
+                "verified Name Note height={} txid={}",
+                note.height, note.txid
+            );
+            if let Some(txid) = expected_txid {
+                if note.txid != txid {
+                    bail!(
+                        "on-chain Name Note txid {} != mint in-flight txid {txid}",
+                        note.txid
+                    );
+                }
+            }
+            assert_eq!(note.name, "alice");
+            assert_eq!(note.action, "claim");
+            assert_eq!(note.ua, user.ua);
+            assert_eq!(note.expires_at.as_deref(), Some("none"));
+            assert_eq!(note.value, 0);
+            let (g_d, pk_d) = registry_commitment_keys()?;
+            assert_eq!(note.g_d, g_d);
+            assert_eq!(note.pk_d, pk_d);
             return Ok(());
         }
         if log.contains("non-request payment") && log.contains(&claim_txid) {

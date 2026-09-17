@@ -28,6 +28,9 @@ zcash_primitives = { version = "0.30.0", default-features = false, features = ["
 zcash_protocol = { version = "0.10.4", default-features = false, features = ["local-consensus"] }
 zcash_note_encryption = "0.4"
 zip32 = "0.2.1"
+# `decrypt` is zns-verify's ZnsIronwoodDomain scan (same orchard tag as the
+# patch below). Ceremony/claim still need orchard for proving.
+zns-verify = { git = "https://github.com/zcashme/zns-verify.git", tag = "v0.1.1", features = ["decrypt"] }
 
 [patch.crates-io]
 orchard = { git = "https://github.com/zcashme/orchard.git", tag = "zns-orchard-v0.15.5.2" }
