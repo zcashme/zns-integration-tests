@@ -54,7 +54,8 @@ pub async fn fund_user(zebra: &mut Zebrad, user: &User) -> Result<()> {
     Ok(())
 }
 
-/// Spend a mature user coinbase to the Treasury with `ZNS:claim:<name>:<ua>`.
+/// Spend a mature user coinbase to the Treasury with
+/// `ZNS:claim:forever:<name>:<ua>`.
 ///
 /// Overpays: the whole coinbase minus ZIP-317. Call after mint is live so
 /// the note is an instruction, not pre-birth balance.
@@ -79,7 +80,7 @@ pub async fn pay_claim(zebra: &mut Zebrad, user: &User, name: &str) -> Result<St
         .map_err(|e| anyhow!("derive user miner secret key: {e}"))?;
 
     let anchor = zebra.ironwood_anchor().await?;
-    let memo_text = format!("ZNS:claim:{name}:{}", user.ua);
+    let memo_text = format!("ZNS:claim:forever:{name}:{}", user.ua);
     let memo: MemoBytes = memo_text
         .parse::<Memo>()
         .map_err(|e| anyhow!("claim memo: {e}"))?

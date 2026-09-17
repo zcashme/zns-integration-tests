@@ -17,7 +17,7 @@ cargo test --test claim -- --nocapture
 ```
 
 `claim` funds a second ZIP-32 user (not the mint seed), pays the Treasury
-`ZNS:claim:alice:<user UA>`, waits for mint to submit the Name Note, mines
+`ZNS:claim:forever:alice:<user UA>`, waits for mint to submit the Name Note, mines
 it, and checks the on-chain memo with [`zns-verify`](https://github.com/zcashme/zns-verify)
 (alice / claim / user UA / `expires_at=none` / value 0, FakeTee Registry
 `(g_d, pk_d)`).

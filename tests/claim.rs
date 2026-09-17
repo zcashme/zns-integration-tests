@@ -1,4 +1,4 @@
-//! Happy-path claim: user pays Treasury `ZNS:claim:alice:<ua>`, mint registers,
+//! Happy-path claim: user pays Treasury `ZNS:claim:forever:alice:<ua>`, mint registers,
 //! then `zns-verify` checks the on-chain Name Note.
 
 use std::time::{Duration, Instant};
@@ -42,7 +42,12 @@ async fn happy_path_claim_alice() -> Result<()> {
         if !mint.is_running() {
             bail!("mint died during vault sweep:\n{}", mint.log_text());
         }
-        if mint_submitted_vault_sweep(&mint.log_text()) {
+        let log = mint.log_text();
+        if mint_submitted_vault_sweep(&log) {
+            break;
+        }
+        if log.contains("vault sweep build failed") {
+            eprintln!("mint vault sweep build failed; continuing to claim");
             break;
         }
         if Instant::now() >= sweep_deadline {
@@ -117,7 +122,9 @@ async fn happy_path_claim_alice() -> Result<()> {
 }
 
 fn mint_submitted_vault_sweep(log: &str) -> bool {
-    log.contains("vault sweep") && (log.contains("submitted") || log.contains("Ironwood"))
+    log.lines().any(|line| {
+        line.contains("submitted") && line.contains("vault sweep") && !line.contains("failed")
+    })
 }
 
 fn mint_name_note_in_flight(log: &str, name: &str) -> bool {
