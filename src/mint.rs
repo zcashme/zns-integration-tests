@@ -10,6 +10,17 @@ use tempfile::TempDir;
 use crate::binaries::{cargo_build_bin_with, mint_bin_override, sibling_dir};
 use crate::child::ChildProcess;
 
+/// Halo2 in a debug mint binary is too slow for vault sweep. `fake-tee`
+/// cannot be `--release`, so raise opt-level on the proving crates.
+const MINT_DEV_OPT: &[&str] = &[
+    "--config",
+    "profile.dev.package.orchard.opt-level=3",
+    "--config",
+    "profile.dev.package.halo2_proofs.opt-level=3",
+    "--config",
+    "profile.dev.package.halo2_gadgets.opt-level=3",
+];
+
 pub struct Mint {
     child: ChildProcess,
     _dir: TempDir,
@@ -25,14 +36,7 @@ impl Mint {
             &sibling_dir("zns-mint"),
             "zns-mint",
             &["--features", "regtest,fake-tee"],
-            &[
-                "--config",
-                "profile.dev.package.orchard.opt-level=3",
-                "--config",
-                "profile.dev.package.halo2_proofs.opt-level=3",
-                "--config",
-                "profile.dev.package.halo2_gadgets.opt-level=3",
-            ],
+            MINT_DEV_OPT,
         )
     }
 
@@ -120,6 +124,7 @@ fn write_fake_capsule(cwd: &Path) -> Result<()> {
     let manifest = mint_dir.join("Cargo.toml");
     let status = Command::new("cargo")
         .current_dir(cwd)
+        .args(MINT_DEV_OPT)
         .args([
             "run",
             "--manifest-path",
