@@ -37,7 +37,7 @@ async fn happy_path_claim_alice() -> Result<()> {
     // New tip so mint's run loop can submit the ceremony vault sweep.
     zebra.generate_blocks(1).await?;
 
-    let sweep_deadline = Instant::now() + Duration::from_secs(300);
+    let sweep_deadline = Instant::now() + Duration::from_secs(600);
     loop {
         if !mint.is_running() {
             bail!("mint died during vault sweep:\n{}", mint.log_text());

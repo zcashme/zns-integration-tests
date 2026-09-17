@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use anyhow::{bail, Context, Result};
 use tempfile::TempDir;
 
-use crate::binaries::{cargo_build_bin, mint_bin_override, sibling_dir};
+use crate::binaries::{cargo_build_bin_with, mint_bin_override, sibling_dir};
 use crate::child::ChildProcess;
 
 pub struct Mint {
@@ -21,10 +21,18 @@ impl Mint {
         if let Some(bin) = mint_bin_override() {
             return Ok(bin);
         }
-        cargo_build_bin(
+        cargo_build_bin_with(
             &sibling_dir("zns-mint"),
             "zns-mint",
             &["--features", "regtest,fake-tee"],
+            &[
+                "--config",
+                "profile.dev.package.orchard.opt-level=3",
+                "--config",
+                "profile.dev.package.halo2_proofs.opt-level=3",
+                "--config",
+                "profile.dev.package.halo2_gadgets.opt-level=3",
+            ],
         )
     }
 
