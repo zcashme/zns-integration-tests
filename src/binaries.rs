@@ -56,6 +56,17 @@ fn which(name: &str) -> Option<PathBuf> {
 
 /// `cargo build --bin <bin>` in `dir`, returning `target/debug/<bin>`.
 pub fn cargo_build_bin(dir: &Path, bin: &str, extra_args: &[&str]) -> Result<PathBuf> {
+    cargo_build_bin_with(dir, bin, extra_args, &[])
+}
+
+/// Like [`cargo_build_bin`], with extra `cargo` flags before the subcommand
+/// (`--config`, …).
+pub fn cargo_build_bin_with(
+    dir: &Path,
+    bin: &str,
+    extra_args: &[&str],
+    cargo_flags: &[&str],
+) -> Result<PathBuf> {
     if !dir.is_dir() {
         bail!(
             "{} is not a directory — clone the sibling repo or set the matching ZNS_*_DIR",
@@ -64,6 +75,7 @@ pub fn cargo_build_bin(dir: &Path, bin: &str, extra_args: &[&str]) -> Result<Pat
     }
     let mut cmd = Command::new("cargo");
     cmd.current_dir(dir)
+        .args(cargo_flags)
         .arg("build")
         .arg("--bin")
         .arg(bin)

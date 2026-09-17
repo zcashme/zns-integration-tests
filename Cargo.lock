@@ -2615,8 +2615,23 @@ dependencies = [
  "tempfile",
  "tokio",
  "zcash_keys",
+ "zcash_note_encryption",
  "zcash_primitives",
  "zcash_protocol",
  "zcash_transparent",
  "zip32",
+ "zns-verify",
+]
+
+[[package]]
+name = "zns-verify"
+version = "0.1.0"
+source = "git+https://github.com/zcashme/zns-verify.git?tag=v0.1.1#6dd96f56e06b57a86896dbd629224b55c02d022c"
+dependencies = [
+ "blake2b_simd",
+ "group",
+ "orchard",
+ "pasta_curves",
+ "sinsemilla",
+ "zcash_protocol",
 ]

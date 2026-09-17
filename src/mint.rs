@@ -2,13 +2,24 @@
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
 use tempfile::TempDir;
 
-use crate::binaries::{cargo_build_bin, mint_bin_override, sibling_dir};
+use crate::binaries::{cargo_build_bin_with, mint_bin_override, sibling_dir};
 use crate::child::ChildProcess;
+
+/// Halo2 in a debug mint binary is too slow for vault sweep. `fake-tee`
+/// cannot be `--release`, so raise opt-level on the proving crates.
+const MINT_DEV_OPT: &[&str] = &[
+    "--config",
+    "profile.dev.package.orchard.opt-level=3",
+    "--config",
+    "profile.dev.package.halo2_proofs.opt-level=3",
+    "--config",
+    "profile.dev.package.halo2_gadgets.opt-level=3",
+];
 
 pub struct Mint {
     child: ChildProcess,
@@ -21,10 +32,11 @@ impl Mint {
         if let Some(bin) = mint_bin_override() {
             return Ok(bin);
         }
-        cargo_build_bin(
+        cargo_build_bin_with(
             &sibling_dir("zns-mint"),
             "zns-mint",
             &["--features", "regtest,fake-tee"],
+            MINT_DEV_OPT,
         )
     }
 
@@ -49,6 +61,10 @@ impl Mint {
 
         let child = Command::new(&bin)
             .current_dir(dir.path())
+            .env(
+                "RUST_LOG",
+                std::env::var("RUST_LOG").unwrap_or_else(|_| "zns_mint=debug".into()),
+            )
             .stdout(Stdio::from(file))
             .stderr(Stdio::from(file2))
             .spawn()
@@ -76,6 +92,30 @@ impl Mint {
     pub fn log_text(&self) -> String {
         self.child.log_text()
     }
+
+    /// Boot finished and the run loop is waiting for tips (`live_from` is set).
+    pub async fn wait_until_live(&mut self) -> Result<()> {
+        let deadline = Instant::now() + Duration::from_secs(300);
+        loop {
+            let log = self.log_text();
+            if log.contains("mint awaiting Zebra tips") {
+                return Ok(());
+            }
+            if log.contains("FATAL") {
+                bail!("mint fatal during boot:\n{}", self.exit_detail());
+            }
+            if !self.is_running() {
+                bail!("mint exited before becoming live:\n{}", self.exit_detail());
+            }
+            if Instant::now() >= deadline {
+                bail!(
+                    "mint did not reach run loop within 300s:\n{}",
+                    self.exit_detail()
+                );
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+    }
 }
 
 /// Seal an all-zero seed with mint's `write_fake_capsule` example into `cwd/keys/`.
@@ -84,6 +124,7 @@ fn write_fake_capsule(cwd: &Path) -> Result<()> {
     let manifest = mint_dir.join("Cargo.toml");
     let status = Command::new("cargo")
         .current_dir(cwd)
+        .args(MINT_DEV_OPT)
         .args([
             "run",
             "--manifest-path",
