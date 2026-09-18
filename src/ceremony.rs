@@ -213,7 +213,22 @@ pub(crate) async fn collect_mature_coinbase(
         }
     }
     coins.sort_by_key(|c| std::cmp::Reverse(c.coin.value()));
-    Ok(coins)
+    // Scan does not see spends. After alice, the oldest user coinbase is
+    // gone; taking `.next()` again would rebuild a tx zebra rejects (-25).
+    let mut unspent = Vec::new();
+    for coin in coins {
+        let txid = coin.outpoint.txid().to_string();
+        let n = coin.outpoint.n();
+        let utxo = zebra
+            .rpc("gettxout", serde_json::json!([txid, n]))
+            .await
+            .with_context(|| format!("gettxout {txid} {n}"))?;
+        if utxo.is_null() {
+            continue;
+        }
+        unspent.push(coin);
+    }
+    Ok(unspent)
 }
 
 fn build_ceremony_tx(
