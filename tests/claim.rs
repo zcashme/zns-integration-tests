@@ -34,25 +34,29 @@ async fn happy_path_claim_alice() -> Result<()> {
     let mint_bin = mint_build.await.expect("mint build task")?;
     let mut mint = Mint::start(mint_bin).await?;
     mint.wait_until_live().await?;
-    // New tip so mint's run loop can submit the ceremony vault sweep.
+    // New tip so the run loop can fire. Sweep is optional: claim uses
+    // the ceremony Treasury notes either way.
     zebra.generate_blocks(1).await?;
 
-    let sweep_deadline = Instant::now() + Duration::from_secs(600);
+    let run_loop_deadline = Instant::now() + Duration::from_secs(120);
     loop {
         if !mint.is_running() {
-            bail!("mint died during vault sweep:\n{}", mint.log_text());
+            bail!("mint died after becoming live:\n{}", mint.log_text());
         }
         let log = mint.log_text();
         if mint_submitted_vault_sweep(&log) {
             break;
         }
-        if log.contains("vault sweep build failed") {
-            eprintln!("mint vault sweep build failed; continuing to claim");
+        if log.contains("vault sweep") && log.contains("failed") {
+            eprintln!("mint vault sweep failed; continuing to claim");
             break;
         }
-        if Instant::now() >= sweep_deadline {
+        if log.contains("mint rules applied") {
+            break;
+        }
+        if Instant::now() >= run_loop_deadline {
             bail!(
-                "mint did not submit the ceremony vault sweep:\n{}",
+                "mint did not apply rules after the post-live tip:\n{}",
                 mint.log_text()
             );
         }
