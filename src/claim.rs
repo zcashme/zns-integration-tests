@@ -25,10 +25,7 @@ use crate::ceremony::{
 use crate::zebra::Zebrad;
 
 /// Not the mint's all-zero seed.
-const USER_SEED: [u8; 32] = [1u8; 32];
-
-/// Blocks to mine after switching the miner so one user coinbase is mature.
-pub const USER_FUND_BLOCKS: u32 = COINBASE_MATURITY + 1;
+pub(crate) const USER_SEED: [u8; 32] = [1u8; 32];
 
 /// A user identity for claim (and later update) tests.
 pub struct User {
@@ -47,11 +44,25 @@ impl User {
     }
 }
 
+/// Restart zebra paying this user, mine until `mature` coinbases are spendable.
+pub async fn fund_user_coinbases(zebra: &mut Zebrad, user: &User, mature: u32) -> Result<()> {
+    if mature == 0 {
+        bail!("fund_user_coinbases requires at least one mature coinbase");
+    }
+    zebra.restart_with_miner(&user.miner_address).await?;
+    zebra.generate_blocks(COINBASE_MATURITY + mature).await?;
+    Ok(())
+}
+
 /// Restart zebra paying this user, mine through coinbase maturity.
 pub async fn fund_user(zebra: &mut Zebrad, user: &User) -> Result<()> {
-    zebra.restart_with_miner(&user.miner_address).await?;
-    zebra.generate_blocks(USER_FUND_BLOCKS).await?;
-    Ok(())
+    fund_user_coinbases(zebra, user, 1).await
+}
+
+/// ZIP-32 account 0 Ironwood FVK of the claim user (not Registry).
+pub fn user_orchard_fvk() -> Result<orchard::keys::FullViewingKey> {
+    let usk = account_usk(&ceremony::regtest_network(), &USER_SEED, 0)?;
+    Ok(orchard::keys::FullViewingKey::from(usk.orchard()))
 }
 
 /// Spend a mature user coinbase to the Treasury with
@@ -60,6 +71,16 @@ pub async fn fund_user(zebra: &mut Zebrad, user: &User) -> Result<()> {
 /// Overpays: the whole coinbase minus ZIP-317. Call after mint is live so
 /// the note is an instruction, not pre-birth balance.
 pub async fn pay_claim(zebra: &mut Zebrad, user: &User, name: &str) -> Result<String> {
+    pay_treasury(
+        zebra,
+        user,
+        &format!("ZNS:claim:forever:{name}:{}", user.ua),
+    )
+    .await
+}
+
+/// Spend a mature user coinbase to the Treasury with `memo_text`.
+pub async fn pay_treasury(zebra: &mut Zebrad, user: &User, memo_text: &str) -> Result<String> {
     let network = ceremony::regtest_network();
     let (taddr, child) = taddr_for_seed(&network, &USER_SEED)?;
     let user_usk = account_usk(&network, &USER_SEED, 0)?;
@@ -80,10 +101,9 @@ pub async fn pay_claim(zebra: &mut Zebrad, user: &User, name: &str) -> Result<St
         .map_err(|e| anyhow!("derive user miner secret key: {e}"))?;
 
     let anchor = zebra.ironwood_anchor().await?;
-    let memo_text = format!("ZNS:claim:forever:{name}:{}", user.ua);
     let memo: MemoBytes = memo_text
         .parse::<Memo>()
-        .map_err(|e| anyhow!("claim memo: {e}"))?
+        .map_err(|e| anyhow!("treasury memo: {e}"))?
         .into();
 
     let target = BlockHeight::from_u32(tip + 1);
