@@ -1,7 +1,8 @@
-# Lint this crate; claim e2e (zebrad + FakeTee mint) on PRs and main.
+# Lint on zvs; PR e2e on the author's Mac; main-gate e2e on zvs.
 #
-# The claim job publishes a FakeTee ceremony + Treasury, installs Sapling
-# params, and runs mint. Price fetch uses live HTTPS.
+# The PR claim job is actor-routed (label mac-<login>): your commit builds
+# on your machine, with its local zebrad / zns-mint checkout / params. A
+# sleeping Mac queues the job until the runner reconnects (24h cap).
 name: CI
 
 on:
@@ -12,15 +13,18 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: "0"
-  ZEBRAD_VERSION: "6.3.0"
 
 jobs:
   test:
     name: test
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, zvs]
     timeout-minutes: 45
     defaults:
       run:
@@ -49,10 +53,42 @@ jobs:
       - name: test (lib)
         run: cargo test --lib
 
+  # PR e2e on the author's machine: fast, warm, no downloads.
   claim:
-    name: claim
-    runs-on: ubuntu-latest
+    name: claim (${{ github.actor }})
+    if: github.event_name == 'pull_request'
+    runs-on: [self-hosted, "mac-${{ github.actor }}"]
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: zns-integration-tests
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: zns-integration-tests
+
+      # The author's machine brings its own toolchain; provisioning actions
+      # would mutate it. Just make the local cargo reachable.
+      - name: cargo on PATH
+        run: echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Point at the local stack
+        run: |
+          echo "ZEBRAD_BIN=$HOME/.cargo/bin/zebrad" >> "$GITHUB_ENV"
+          echo "ZNS_MINT_DIR=$HOME/ZcashNames/zns-mint" >> "$GITHUB_ENV"
+
+      - name: claim
+        run: cargo test --test claim -- --nocapture
+
+  # Authoritative e2e on the always-on box: hermetic (fresh mint checkout,
+  # pinned zebrad release, fetched Sapling params).
+  claim-main:
+    name: claim (zvs)
+    if: github.event_name == 'push'
+    runs-on: [self-hosted, zvs]
     timeout-minutes: 90
+    env:
+      ZEBRAD_VERSION: "6.3.0"
     defaults:
       run:
         working-directory: zns-integration-tests
