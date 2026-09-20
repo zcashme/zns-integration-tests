@@ -19,7 +19,7 @@ use zcash_protocol::memo::{Memo, MemoBytes};
 use zcash_protocol::value::Zatoshis;
 
 use crate::ceremony::{
-    self, account_usk, collect_mature_coinbase, orchard_ua, taddr_for_seed, NoSapling,
+    self, account_usk, collect_mature_coinbase, orchard_ua, sapling_provers, taddr_for_seed,
     COINBASE_MATURITY, DEV_SEED,
 };
 use crate::zebra::Zebrad;
@@ -194,14 +194,15 @@ fn build_claim_tx(
         )
         .map_err(|e| anyhow!("ironwood padding output: {e}"))?;
 
+    let provers = sapling_provers()?;
     let built = builder
         .build(
             &signing,
             &[],
             &[],
             OsRng,
-            &NoSapling,
-            &NoSapling,
+            &provers.spend,
+            &provers.output,
             &Zip317::standard(),
         )
         .map_err(|e| anyhow!("prove/sign claim tx: {e}"))?;

@@ -2603,9 +2603,7 @@ name = "zns-integration-tests"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "bls12_381",
  "hex",
- "jubjub",
  "orchard",
  "rand",
  "reqwest",

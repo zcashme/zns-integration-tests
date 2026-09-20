@@ -8,7 +8,7 @@ use std::io::Cursor;
 
 use anyhow::{anyhow, bail, Context, Result};
 use rand::rngs::OsRng;
-use sapling::prover::{OutputProver, SpendProver};
+use sapling::circuit::{OutputParameters, SpendParameters};
 use transparent::address::TransparentAddress;
 use transparent::builder::TransparentSigningSet;
 use transparent::bundle::OutPoint;
@@ -315,64 +315,52 @@ fn build_ceremony_tx(
         )
         .map_err(|e| anyhow!("ironwood padding output: {e}"))?;
 
+    let provers = sapling_provers()?;
     let built = builder
         .build(
             &signing,
             &[],
             &[],
             OsRng,
-            &NoSapling,
-            &NoSapling,
+            &provers.spend,
+            &provers.output,
             &Zip317::standard(),
         )
         .map_err(|e| anyhow!("prove/sign ceremony tx: {e}"))?;
     Ok(built.transaction().clone())
 }
 
-/// Sapling proving keys are unused: this tx is transparent + Ironwood only.
-pub(crate) struct NoSapling;
-
-impl SpendProver for NoSapling {
-    type Proof = ();
-
-    fn prepare_circuit(
-        _proof_generation_key: sapling::ProofGenerationKey,
-        _diversifier: sapling::Diversifier,
-        _rseed: sapling::Rseed,
-        _value: sapling::value::NoteValue,
-        _alpha: jubjub::Fr,
-        _rcv: sapling::value::ValueCommitTrapdoor,
-        _anchor: bls12_381::Scalar,
-        _merkle_path: sapling::MerklePath,
-    ) -> Option<sapling::circuit::Spend> {
-        unreachable!("ceremony tx has no Sapling spends")
-    }
-
-    fn create_proof<R: rand::RngCore>(&self, _circuit: sapling::circuit::Spend, _rng: &mut R) {}
-
-    fn encode_proof(_proof: Self::Proof) -> sapling::bundle::GrothProofBytes {
-        unreachable!("ceremony tx has no Sapling spends")
-    }
+/// Sapling proving parameters for the transaction builder.
+///
+/// `zcash_primitives`' `Builder::build` requires Sapling provers even for a
+/// transaction with no Sapling component; for this harness's transparent +
+/// Ironwood txs they are type-checked and never invoked. Same files mint
+/// loads at boot (`ZCASH_PARAMS_DIR` or `~/.zcash-params`).
+pub(crate) struct SaplingProvers {
+    pub(crate) spend: SpendParameters,
+    pub(crate) output: OutputParameters,
 }
 
-impl OutputProver for NoSapling {
-    type Proof = ();
-
-    fn prepare_circuit(
-        _esk: &sapling::keys::EphemeralSecretKey,
-        _payment_address: sapling::PaymentAddress,
-        _rcm: jubjub::Fr,
-        _value: sapling::value::NoteValue,
-        _rcv: sapling::value::ValueCommitTrapdoor,
-    ) -> sapling::circuit::Output {
-        unreachable!("ceremony tx has no Sapling outputs")
-    }
-
-    fn create_proof<R: rand::RngCore>(&self, _circuit: sapling::circuit::Output, _rng: &mut R) {}
-
-    fn encode_proof(_proof: Self::Proof) -> sapling::bundle::GrothProofBytes {
-        unreachable!("ceremony tx has no Sapling outputs")
-    }
+pub(crate) fn sapling_provers() -> Result<SaplingProvers> {
+    let dir = std::env::var("ZCASH_PARAMS_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| {
+            std::path::PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".into()))
+                .join(".zcash-params")
+        });
+    let read = |name: &str| -> Result<Vec<u8>> {
+        let path = dir.join(name);
+        std::fs::read(&path).with_context(|| format!("read {}", path.display()))
+    };
+    // `false` = skip point-encoding verification: deserialization only.
+    // Upstream documents this for params verified another way (mint checks
+    // BLAKE2b-512; here nothing is ever proven with them).
+    Ok(SaplingProvers {
+        spend: SpendParameters::read(&read("sapling-spend.params")?[..], false)
+            .map_err(|e| anyhow!("sapling-spend.params: {e:?}"))?,
+        output: OutputParameters::read(&read("sapling-output.params")?[..], false)
+            .map_err(|e| anyhow!("sapling-output.params: {e:?}"))?,
+    })
 }
 
 #[cfg(test)]
