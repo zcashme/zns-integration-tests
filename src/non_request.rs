@@ -38,7 +38,7 @@ async fn wait_non_request(stack: &mut Stack, txid: &str, label: &str) -> Result<
     let mut poked = 0u32;
     loop {
         if !stack.mint.is_running() {
-            bail!("mint died during {label}:\n{}", stack.mint.log_text());
+            bail!("mint died during {label}:\n{}", stack.mint.exit_detail());
         }
         let log = stack.mint.log_text();
         if log.contains("non-request payment") && log.contains(txid) {
@@ -46,7 +46,10 @@ async fn wait_non_request(stack: &mut Stack, txid: &str, label: &str) -> Result<
             return Ok(());
         }
         if Instant::now() >= deadline {
-            bail!("mint did not log non-request for {label} ({txid}) within 180s:\n{log}");
+            bail!(
+                "mint did not log non-request for {label} ({txid}) within 180s:\n{}",
+                stack.mint.exit_detail()
+            );
         }
         tokio::time::sleep(Duration::from_secs(2)).await;
         if poked == 0 && started.elapsed() > Duration::from_secs(60) {

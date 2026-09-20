@@ -28,11 +28,17 @@ pub async fn claim_alice(stack: &mut Stack) -> Result<VerifiedNameNote> {
     let mut poked = 0u32;
     loop {
         if !stack.mint.is_running() {
-            bail!("mint died while settling claim:\n{}", stack.mint.log_text());
+            bail!(
+                "mint died while settling claim:\n{}",
+                stack.mint.exit_detail()
+            );
         }
         let log = stack.mint.log_text();
         if mint_rejected_name_note(&log, "alice") {
-            bail!("mint rejected alice registration:\n{log}");
+            bail!(
+                "mint rejected alice registration:\n{}",
+                stack.mint.exit_detail()
+            );
         }
         if mint_name_note_in_flight(&log, "alice") {
             eprintln!("mint settled alice");
@@ -64,13 +70,22 @@ pub async fn claim_alice(stack: &mut Stack) -> Result<VerifiedNameNote> {
             return Ok(note);
         }
         if log.contains("non-request payment") && log.contains(&claim_txid) {
-            bail!("mint saw claim tx {claim_txid} as a non-request payment:\n{log}");
+            bail!(
+                "mint saw claim tx {claim_txid} as a non-request payment:\n{}",
+                stack.mint.exit_detail()
+            );
         }
         if log.contains("claim not authorized") && log.contains("alice") {
-            bail!("mint did not authorize alice:\n{log}");
+            bail!(
+                "mint did not authorize alice:\n{}",
+                stack.mint.exit_detail()
+            );
         }
         if Instant::now() >= deadline {
-            bail!("mint did not register alice within 600s:\n{log}");
+            bail!(
+                "mint did not register alice within 600s:\n{}",
+                stack.mint.exit_detail()
+            );
         }
         tokio::time::sleep(Duration::from_secs(5)).await;
         if poked == 0 && started.elapsed() > Duration::from_secs(90) {

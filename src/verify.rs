@@ -73,7 +73,7 @@ pub async fn wait_for_verified_name_note(
         if !mint.is_running() {
             bail!(
                 "mint died while waiting to mine the Name Note:\n{}",
-                mint.log_text()
+                mint.exit_detail()
             );
         }
         zebra.generate_blocks(1).await?;

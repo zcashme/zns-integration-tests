@@ -57,7 +57,7 @@ async fn wait_for_first_run_loop(zebra: &mut Zebrad, mint: &mut Mint) -> Result<
     let deadline = Instant::now() + Duration::from_secs(120);
     loop {
         if !mint.is_running() {
-            bail!("mint died after becoming live:\n{}", mint.log_text());
+            bail!("mint died after becoming live:\n{}", mint.exit_detail());
         }
         let log = mint.log_text();
         if mint_submitted_vault_sweep(&log) {
@@ -73,7 +73,7 @@ async fn wait_for_first_run_loop(zebra: &mut Zebrad, mint: &mut Mint) -> Result<
         if Instant::now() >= deadline {
             bail!(
                 "mint did not apply rules after the post-live tip:\n{}",
-                mint.log_text()
+                mint.exit_detail()
             );
         }
         tokio::time::sleep(Duration::from_secs(2)).await;
