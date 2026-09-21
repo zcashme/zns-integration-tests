@@ -5,23 +5,27 @@
 //! bundle to the Treasury UA.
 
 use anyhow::{anyhow, bail, Context, Result};
+use orchard::builder::{Builder as OrchardBuilder, BundleType};
+use orchard::bundle::BundleVersion;
 use rand::rngs::OsRng;
-use transparent::builder::TransparentSigningSet;
+use transparent::builder::{
+    SpendInfo, TransparentBuilder, TransparentInputInfo, TransparentSigningSet,
+};
 use zcash_keys::encoding::encode_transparent_address_p;
 use zcash_keys::keys::UnifiedSpendingKey;
-use zcash_primitives::transaction::builder::{BuildConfig, Builder, BundlePadding};
 use zcash_primitives::transaction::fees::transparent::InputSize;
-use zcash_primitives::transaction::fees::zip317::{self, FeeRule as Zip317};
+use zcash_primitives::transaction::fees::zip317::FeeRule as Zip317;
 use zcash_primitives::transaction::fees::FeeRule as _;
 use zcash_primitives::transaction::Transaction;
 use zcash_protocol::consensus::BlockHeight;
 use zcash_protocol::memo::{Memo, MemoBytes};
-use zcash_protocol::value::Zatoshis;
+use zcash_protocol::value::{ZatBalance, Zatoshis};
 
 use crate::ceremony::{
-    self, account_usk, collect_mature_coinbase, orchard_ua, taddr_for_seed, NoSapling,
-    COINBASE_MATURITY, DEV_SEED,
+    self, account_usk, collect_mature_coinbase, orchard_ua, taddr_for_seed, COINBASE_MATURITY,
+    DEV_SEED,
 };
+use crate::tx::assemble_v6_transparent_ironwood;
 use crate::zebra::Zebrad;
 
 /// Not the mint's all-zero seed.
@@ -115,7 +119,6 @@ pub async fn pay_treasury(zebra: &mut Zebrad, user: &User, memo_text: &str) -> R
     .context("claim proving task")??;
     let txid = tx.txid().to_string();
     eprintln!("claim: broadcast {txid}");
-    log_treasury_decrypts(&tx, &account_usk(&network, &DEV_SEED, 0)?);
 
     zebra
         .ensure_rpc()
@@ -175,87 +178,49 @@ fn build_claim_tx(
         payment.into_u64()
     );
 
+    // Transparent side: the user's P2PKH coinbase input.
     let mut signing = TransparentSigningSet::new();
     let pubkey = signing.add_key(miner_sk);
+    let mut transparent_builder = TransparentBuilder::empty();
+    transparent_builder.add_input(TransparentInputInfo::from_parts(
+        coin.outpoint,
+        coin.coin,
+        SpendInfo::P2pkh { pubkey },
+    )?);
+    let transparent = transparent_builder.build();
+
+    // Ironwood side: the payment carrying the claim memo, plus one zero
+    // pad so the action count is even. UNPADDED at the current anchor.
+    let mut ironwood_builder = OrchardBuilder::new(
+        BundleType::UNPADDED,
+        BundleVersion::ironwood_v3(),
+        BundleVersion::ironwood_v3().default_flags(),
+        anchor,
+    )?;
     let treasury_fvk = orchard::keys::FullViewingKey::from(treasury_usk.orchard());
     let treasury_addr = treasury_fvk.address_at(0u32, orchard::keys::Scope::External);
-    let treasury_ovk = Some(treasury_fvk.to_ovk(orchard::keys::Scope::External));
+    ironwood_builder.add_output(
+        Some(treasury_fvk.to_ovk(orchard::keys::Scope::External)),
+        treasury_addr,
+        orchard::value::NoteValue::from_raw(payment.into_u64()),
+        *memo.as_array(),
+    )?;
     let user_fvk = orchard::keys::FullViewingKey::from(
         account_usk(&network, &USER_SEED, 0)
             .expect("user USK")
             .orchard(),
     );
-    let pad_addr = user_fvk.address_at(0u32, orchard::keys::Scope::External);
-    let pad_ovk = Some(user_fvk.to_ovk(orchard::keys::Scope::External));
+    ironwood_builder.add_output(
+        Some(user_fvk.to_ovk(orchard::keys::Scope::External)),
+        user_fvk.address_at(0u32, orchard::keys::Scope::External),
+        orchard::value::NoteValue::from_raw(0),
+        [0; 512],
+    )?;
+    let (ironwood, _) = ironwood_builder
+        .build::<ZatBalance>(&mut OsRng)?
+        .expect("ironwood bundle exists");
 
-    let mut builder = Builder::new(
-        network,
-        target,
-        BuildConfig::Standard {
-            sapling_anchor: None,
-            orchard_anchor: None,
-            ironwood_anchor: Some(anchor),
-            orchard_padding: BundlePadding::UNPADDED,
-            ironwood_padding: BundlePadding::UNPADDED,
-        },
-    );
-    builder
-        .add_transparent_p2pkh_input(pubkey, coin.outpoint, coin.coin)
-        .map_err(|e| anyhow!("transparent input: {e}"))?;
-    builder
-        .add_ironwood_output::<zip317::FeeError>(treasury_ovk, treasury_addr, payment, memo)
-        .map_err(|e| anyhow!("claim payment output: {e}"))?;
-    builder
-        .add_ironwood_output::<zip317::FeeError>(
-            pad_ovk,
-            pad_addr,
-            Zatoshis::ZERO,
-            MemoBytes::empty(),
-        )
-        .map_err(|e| anyhow!("ironwood padding output: {e}"))?;
-
-    let built = builder
-        .build(
-            &signing,
-            &[],
-            &[],
-            OsRng,
-            &NoSapling,
-            &NoSapling,
-            &Zip317::standard(),
-        )
-        .map_err(|e| anyhow!("prove/sign claim tx: {e}"))?;
-    Ok(built.transaction().clone())
-}
-
-fn log_treasury_decrypts(tx: &Transaction, treasury_usk: &UnifiedSpendingKey) {
-    let fvk = orchard::keys::FullViewingKey::from(treasury_usk.orchard());
-    let ivk = fvk.to_ivk(orchard::keys::Scope::External).prepare();
-    let Some(bundle) = tx.ironwood_bundle() else {
-        eprintln!("claim: no ironwood bundle");
-        return;
-    };
-    eprintln!(
-        "claim: ironwood v {:?} actions={}",
-        bundle.bundle_version(),
-        bundle.actions().len()
-    );
-    for (i, action) in bundle.actions().iter().enumerate() {
-        let domain = orchard::note_encryption::IronwoodDomain::for_action(action);
-        match zcash_note_encryption::try_note_decryption(&domain, &ivk, action) {
-            Some((note, _, memo)) => {
-                let end = memo.iter().position(|b| *b == 0).unwrap_or(memo.len());
-                eprintln!(
-                    "claim: decrypted Treasury payment (action {i}, {} zats): {:?}",
-                    note.value().inner(),
-                    String::from_utf8_lossy(&memo[..end.min(160)])
-                );
-            }
-            None => eprintln!(
-                "claim: action {i} is the even-count pad to the user; Treasury keys cannot open it (expected)"
-            ),
-        }
-    }
+    assemble_v6_transparent_ironwood(&network, target, transparent, ironwood, &signing)
 }
 
 #[cfg(test)]

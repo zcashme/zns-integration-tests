@@ -11,6 +11,7 @@ mod non_request;
 mod register;
 mod resolver;
 mod rpc;
+mod tx;
 mod verify;
 mod zebra;
 

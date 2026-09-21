@@ -4,29 +4,28 @@
 //! no SNP, no loader, no production seed. Keep `ANCHOR_POOL_SIZE` and
 //! `MIN_TREASURY_ZATS` aligned with `zns-mint`.
 
-use std::io::Cursor;
-
 use anyhow::{anyhow, bail, Context, Result};
+use orchard::builder::{Builder as OrchardBuilder, BundleType};
+use orchard::bundle::BundleVersion;
 use rand::rngs::OsRng;
-use sapling::prover::{OutputProver, SpendProver};
 use transparent::address::TransparentAddress;
-use transparent::builder::TransparentSigningSet;
+use transparent::builder::{
+    SpendInfo, TransparentBuilder, TransparentInputInfo, TransparentSigningSet,
+};
 use transparent::bundle::OutPoint;
 use transparent::keys::{IncomingViewingKey, NonHardenedChildIndex};
 use zcash_keys::encoding::encode_transparent_address_p;
 use zcash_keys::keys::UnifiedSpendingKey;
-use zcash_primitives::block::Block;
-use zcash_primitives::transaction::builder::{BuildConfig, Builder, BundlePadding};
 use zcash_primitives::transaction::fees::transparent::InputSize;
-use zcash_primitives::transaction::fees::zip317::{self, FeeRule as Zip317};
+use zcash_primitives::transaction::fees::zip317::FeeRule as Zip317;
 use zcash_primitives::transaction::fees::FeeRule as _;
 use zcash_primitives::transaction::Transaction;
 use zcash_protocol::consensus::BlockHeight;
 use zcash_protocol::local_consensus::LocalNetwork;
-use zcash_protocol::memo::MemoBytes;
-use zcash_protocol::value::Zatoshis;
+use zcash_protocol::value::{ZatBalance, Zatoshis};
 use zip32::AccountId;
 
+use crate::tx::assemble_v6_transparent_ironwood;
 use crate::zebra::{Zebrad, NU6_3_ACTIVATION_HEIGHT};
 
 /// Matches `zns-mint::mint::registry::ANCHOR_POOL_SIZE`.
@@ -175,42 +174,54 @@ pub(crate) struct Coin {
     pub coin: transparent::bundle::TxOut,
 }
 
+/// One entry of zebra's `getaddressutxos` response.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AddressUtxo {
+    txid: String,
+    output_index: u32,
+    satoshis: u64,
+    script: String,
+    height: u32,
+}
+
 pub(crate) async fn collect_mature_coinbase(
     zebra: &Zebrad,
     network: &LocalNetwork,
     miner: &TransparentAddress,
     tip: u32,
 ) -> Result<Vec<Coin>> {
-    let next_height = tip.saturating_add(1);
+    let address = encode_transparent_address_p(network, miner);
+    let utxos: Vec<AddressUtxo> = serde_json::from_value(
+        zebra
+            .rpc(
+                "getaddressutxos",
+                serde_json::json!([{ "addresses": [address] }]),
+            )
+            .await
+            .context("getaddressutxos")?,
+    )
+    .context("getaddressutxos response")?;
     let mut coins = Vec::new();
-    // Block::read cannot parse genesis.
-    for height in 1..=tip {
-        if height + COINBASE_MATURITY > next_height {
+    for utxo in utxos {
+        // zebra does not maturity-filter; coinbase needs COINBASE_MATURITY
+        // confirmations to be spendable.
+        if utxo.height + COINBASE_MATURITY > tip.saturating_add(1) {
             continue;
         }
-        let hex = zebra
-            .rpc("getblock", serde_json::json!([height.to_string(), 0]))
-            .await
-            .with_context(|| format!("getblock {height}"))?;
-        let hex = hex
-            .as_str()
-            .ok_or_else(|| anyhow!("getblock {height} was not hex"))?;
-        let bytes = hex::decode(hex).with_context(|| format!("decode block {height}"))?;
-        let block = Block::read(Cursor::new(bytes), network)
-            .with_context(|| format!("parse block {height}"))?;
-        for tx in block.vtx() {
-            let Some(bundle) = tx.transparent_bundle() else {
-                continue;
-            };
-            for (n, out) in bundle.vout.iter().enumerate() {
-                if out.recipient_address().as_ref() == Some(miner) && out.value() > Zatoshis::ZERO {
-                    coins.push(Coin {
-                        outpoint: OutPoint::new(*tx.txid().as_ref(), n as u32),
-                        coin: out.clone(),
-                    });
-                }
-            }
-        }
+        let mut txid = hex::decode(&utxo.txid).context("txid hex")?;
+        txid.reverse(); // display order -> internal byte order
+        let script = hex::decode(&utxo.script).context("script hex")?;
+        coins.push(Coin {
+            outpoint: OutPoint::new(
+                txid.try_into().map_err(|_| anyhow!("txid length"))?,
+                utxo.output_index,
+            ),
+            coin: transparent::bundle::TxOut::new(
+                Zatoshis::from_u64(utxo.satoshis).context("satoshis range")?,
+                transparent::address::Script(zcash_script::script::Code(script)),
+            ),
+        });
     }
     coins.sort_by_key(|c| std::cmp::Reverse(c.coin.value()));
     // Scan does not see spends. After alice, the oldest user coinbase is
@@ -277,117 +288,56 @@ fn build_ceremony_tx(
         );
     }
 
+    // Transparent side: the miner's P2PKH coinbase input.
     let mut signing = TransparentSigningSet::new();
     let pubkey = signing.add_key(miner_sk);
+    let mut transparent_builder = TransparentBuilder::empty();
+    transparent_builder.add_input(TransparentInputInfo::from_parts(
+        coin.outpoint,
+        coin.coin,
+        SpendInfo::P2pkh { pubkey },
+    )?);
+    let transparent = transparent_builder.build();
 
+    // Ironwood side: 40 zero Registry anchors + Treasury funding + one zero
+    // pad so the action count is even (42). UNPADDED, empty-tree anchor.
+    let mut ironwood_builder = OrchardBuilder::new(
+        BundleType::UNPADDED,
+        BundleVersion::ironwood_v3(),
+        BundleVersion::ironwood_v3().default_flags(),
+        orchard::Anchor::empty_tree(),
+    )?;
     let registry_fvk = orchard::keys::FullViewingKey::from(registry_usk.orchard());
-    let treasury_fvk = orchard::keys::FullViewingKey::from(treasury_usk.orchard());
-
-    let mut builder = Builder::new(
-        *network,
-        target,
-        BuildConfig::Standard {
-            sapling_anchor: None,
-            orchard_anchor: None,
-            ironwood_anchor: Some(orchard::Anchor::empty_tree()),
-            orchard_padding: BundlePadding::UNPADDED,
-            ironwood_padding: BundlePadding::UNPADDED,
-        },
-    );
-    builder
-        .add_transparent_p2pkh_input(pubkey, coin.outpoint, coin.coin)
-        .map_err(|e| anyhow!("transparent input: {e}"))?;
-
     let registry_addr = registry_fvk.address_at(0u32, orchard::keys::Scope::External);
-    let registry_ovk = Some(registry_fvk.to_ovk(orchard::keys::Scope::External));
+    let registry_ovk = registry_fvk.to_ovk(orchard::keys::Scope::External);
     for _ in 0..ANCHOR_POOL_SIZE {
-        builder
-            .add_ironwood_output::<zip317::FeeError>(
-                registry_ovk.clone(),
-                registry_addr,
-                Zatoshis::ZERO,
-                MemoBytes::empty(),
-            )
-            .map_err(|e| anyhow!("registry anchor output: {e}"))?;
+        ironwood_builder.add_output(
+            Some(registry_ovk.clone()),
+            registry_addr,
+            orchard::value::NoteValue::from_raw(0),
+            [0; 512],
+        )?;
     }
-
+    let treasury_fvk = orchard::keys::FullViewingKey::from(treasury_usk.orchard());
     let treasury_addr = treasury_fvk.address_at(0u32, orchard::keys::Scope::External);
-    let treasury_ovk = Some(treasury_fvk.to_ovk(orchard::keys::Scope::External));
-    builder
-        .add_ironwood_output::<zip317::FeeError>(
-            treasury_ovk.clone(),
-            treasury_addr,
-            treasury_value,
-            MemoBytes::empty(),
-        )
-        .map_err(|e| anyhow!("treasury output: {e}"))?;
-    builder
-        .add_ironwood_output::<zip317::FeeError>(
-            treasury_ovk,
-            treasury_addr,
-            Zatoshis::ZERO,
-            MemoBytes::empty(),
-        )
-        .map_err(|e| anyhow!("ironwood padding output: {e}"))?;
+    let treasury_ovk = treasury_fvk.to_ovk(orchard::keys::Scope::External);
+    ironwood_builder.add_output(
+        Some(treasury_ovk.clone()),
+        treasury_addr,
+        orchard::value::NoteValue::from_raw(treasury_value.into_u64()),
+        [0; 512],
+    )?;
+    ironwood_builder.add_output(
+        Some(treasury_ovk),
+        treasury_addr,
+        orchard::value::NoteValue::from_raw(0),
+        [0; 512],
+    )?;
+    let (ironwood, _) = ironwood_builder
+        .build::<ZatBalance>(&mut OsRng)?
+        .expect("ironwood bundle exists");
 
-    let built = builder
-        .build(
-            &signing,
-            &[],
-            &[],
-            OsRng,
-            &NoSapling,
-            &NoSapling,
-            &Zip317::standard(),
-        )
-        .map_err(|e| anyhow!("prove/sign ceremony tx: {e}"))?;
-    Ok(built.transaction().clone())
-}
-
-/// Sapling proving keys are unused: this tx is transparent + Ironwood only.
-pub(crate) struct NoSapling;
-
-impl SpendProver for NoSapling {
-    type Proof = ();
-
-    fn prepare_circuit(
-        _proof_generation_key: sapling::ProofGenerationKey,
-        _diversifier: sapling::Diversifier,
-        _rseed: sapling::Rseed,
-        _value: sapling::value::NoteValue,
-        _alpha: jubjub::Fr,
-        _rcv: sapling::value::ValueCommitTrapdoor,
-        _anchor: bls12_381::Scalar,
-        _merkle_path: sapling::MerklePath,
-    ) -> Option<sapling::circuit::Spend> {
-        unreachable!("ceremony tx has no Sapling spends")
-    }
-
-    fn create_proof<R: rand::RngCore>(&self, _circuit: sapling::circuit::Spend, _rng: &mut R) {}
-
-    fn encode_proof(_proof: Self::Proof) -> sapling::bundle::GrothProofBytes {
-        unreachable!("ceremony tx has no Sapling spends")
-    }
-}
-
-impl OutputProver for NoSapling {
-    type Proof = ();
-
-    fn prepare_circuit(
-        _esk: &sapling::keys::EphemeralSecretKey,
-        _payment_address: sapling::PaymentAddress,
-        _rcm: jubjub::Fr,
-        _value: sapling::value::NoteValue,
-        _rcv: sapling::value::ValueCommitTrapdoor,
-    ) -> sapling::circuit::Output {
-        unreachable!("ceremony tx has no Sapling outputs")
-    }
-
-    fn create_proof<R: rand::RngCore>(&self, _circuit: sapling::circuit::Output, _rng: &mut R) {}
-
-    fn encode_proof(_proof: Self::Proof) -> sapling::bundle::GrothProofBytes {
-        unreachable!("ceremony tx has no Sapling outputs")
-    }
+    assemble_v6_transparent_ironwood(network, target, transparent, ironwood, &signing)
 }
 
 #[cfg(test)]
