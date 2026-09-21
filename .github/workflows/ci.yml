@@ -1,7 +1,9 @@
 # Lint this crate; claim e2e (zebrad + FakeTee mint) on PRs and main.
 #
 # The claim job publishes a FakeTee ceremony + Treasury, installs Sapling
-# params, and runs mint. Price fetch uses live HTTPS.
+# params, and runs mint. Price fetch uses live HTTPS. The signed ceremony
+# tx is cached across runs (deterministic regtest chain), skipping the
+# ~18 min Halo2 proof on cache hits.
 name: CI
 
 on:
@@ -120,8 +122,19 @@ jobs:
           test "$(stat -c%s "$spend")" -eq 47958396
           test "$(stat -c%s "$output")" -eq 3592860
 
+      - name: Cache ceremony tx
+        # The regtest chain through FIXTURE_HEIGHT is deterministic, so a
+        # ceremony tx signed on an earlier run replays without re-proving.
+        # Key on everything that shapes the chain or the tx itself; a miss
+        # costs one slow run and re-seeds the cache.
+        uses: actions/cache@v4
+        with:
+          path: zns-integration-tests/ceremony-tx.hex
+          key: ceremony-tx-v1-${{ env.ZEBRAD_VERSION }}-${{ hashFiles('zns-integration-tests/src/ceremony.rs', 'zns-integration-tests/src/zebra.rs', 'zns-integration-tests/Cargo.lock') }}
+
       - name: claim
         env:
           ZNS_MINT_DIR: ${{ github.workspace }}/zns-mint
           ZCASH_PARAMS_DIR: ${{ github.workspace }}/zcash-params
+          ZNS_CEREMONY_TX_CACHE: ceremony-tx.hex
         run: cargo test --test claim -- --nocapture
