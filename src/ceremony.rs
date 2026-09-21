@@ -16,19 +16,16 @@ use transparent::bundle::OutPoint;
 use transparent::keys::{IncomingViewingKey, NonHardenedChildIndex};
 use zcash_keys::encoding::encode_transparent_address_p;
 use zcash_keys::keys::UnifiedSpendingKey;
-use zcash_primitives::transaction::builder::cached_orchard_proving_key;
-use zcash_primitives::transaction::components::orchard::bundle_version_for_branch;
 use zcash_primitives::transaction::fees::transparent::InputSize;
 use zcash_primitives::transaction::fees::zip317::FeeRule as Zip317;
 use zcash_primitives::transaction::fees::FeeRule as _;
-use zcash_primitives::transaction::sighash::{signature_hash, SignableInput};
-use zcash_primitives::transaction::txid::TxIdDigester;
-use zcash_primitives::transaction::{self, Transaction, TransactionData};
-use zcash_protocol::consensus::{BlockHeight, BranchId};
+use zcash_primitives::transaction::Transaction;
+use zcash_protocol::consensus::BlockHeight;
 use zcash_protocol::local_consensus::LocalNetwork;
 use zcash_protocol::value::{ZatBalance, Zatoshis};
 use zip32::AccountId;
 
+use crate::tx::assemble_v6_transparent_ironwood;
 use crate::zebra::{Zebrad, NU6_3_ACTIVATION_HEIGHT};
 
 /// Matches `zns-mint::mint::registry::ANCHOR_POOL_SIZE`.
@@ -325,54 +322,7 @@ fn build_ceremony_tx(
         .build::<ZatBalance>(&mut OsRng)?
         .expect("ironwood bundle exists");
 
-    // Assemble v6: the Sapling slot is None — no Sapling provers exist.
-    let branch_id = BranchId::for_height(network, target);
-    let unauthed: TransactionData<transaction::Unauthorized> = TransactionData::from_parts_v6(
-        branch_id,
-        0,
-        target + 40,
-        transparent.clone(),
-        None,
-        None,
-        Some(ironwood.clone()),
-    );
-    let txid_parts = unauthed.digest(TxIdDigester);
-
-    // Authorize: sign the coinbase input, then prove and sign the bundle.
-    let transparent = transparent
-        .map(|b| {
-            b.apply_signatures(
-                |index| {
-                    *signature_hash(&unauthed, &SignableInput::Transparent(index), &txid_parts)
-                        .as_ref()
-                },
-                &signing,
-            )
-        })
-        .transpose()?;
-    let bundle_v = bundle_version_for_branch(branch_id, orchard::ValuePool::Ironwood)
-        .expect("ironwood bundle implies NU6.3");
-    let ironwood = ironwood
-        .create_proof(
-            cached_orchard_proving_key(bundle_v.circuit_version()),
-            &mut OsRng,
-        )?
-        .prepare(
-            OsRng,
-            *signature_hash(&unauthed, &SignableInput::Shielded, &txid_parts).as_ref(),
-        )
-        .finalize()?;
-
-    Ok(TransactionData::from_parts_v6(
-        branch_id,
-        0,
-        target + 40,
-        transparent,
-        None,
-        None,
-        Some(ironwood),
-    )
-    .freeze()?)
+    assemble_v6_transparent_ironwood(network, target, transparent, ironwood, &signing)
 }
 
 #[cfg(test)]

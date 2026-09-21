@@ -7,6 +7,7 @@ mod claim;
 mod mint;
 mod resolver;
 mod rpc;
+mod tx;
 mod verify;
 mod zebra;
 
