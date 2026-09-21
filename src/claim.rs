@@ -25,7 +25,7 @@ use crate::ceremony::{
     self, account_usk, collect_mature_coinbase, orchard_ua, taddr_for_seed, COINBASE_MATURITY,
     DEV_SEED,
 };
-use crate::tx::assemble_v6_transparent_ironwood;
+use crate::tx::{assemble_v6_transparent_ironwood, DEFAULT_TX_EXPIRY_DELTA};
 use crate::zebra::Zebrad;
 
 /// Not the mint's all-zero seed.
@@ -220,7 +220,14 @@ fn build_claim_tx(
         .build::<ZatBalance>(&mut OsRng)?
         .expect("ironwood bundle exists");
 
-    assemble_v6_transparent_ironwood(&network, target, transparent, ironwood, &signing)
+    assemble_v6_transparent_ironwood(
+        &network,
+        target,
+        target + DEFAULT_TX_EXPIRY_DELTA,
+        transparent,
+        ironwood,
+        &signing,
+    )
 }
 
 #[cfg(test)]

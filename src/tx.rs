@@ -7,13 +7,15 @@ use anyhow::Result;
 use rand::rngs::OsRng;
 use transparent::builder::{TransparentSigningSet, Unauthorized};
 use transparent::bundle::Bundle as TransparentBundle;
-use zcash_primitives::transaction::builder::{cached_orchard_proving_key, DEFAULT_TX_EXPIRY_DELTA};
+use zcash_primitives::transaction::builder::cached_orchard_proving_key;
 use zcash_primitives::transaction::components::orchard::bundle_version_for_branch;
 use zcash_primitives::transaction::sighash::{signature_hash, SignableInput};
 use zcash_primitives::transaction::txid::TxIdDigester;
 use zcash_primitives::transaction::{self, Transaction, TransactionData};
 use zcash_protocol::consensus::{BlockHeight, BranchId, Parameters};
 use zcash_protocol::value::ZatBalance;
+
+pub use zcash_primitives::transaction::builder::DEFAULT_TX_EXPIRY_DELTA;
 
 type UnprovenIronwood = orchard::Bundle<
     orchard::builder::InProgress<orchard::builder::Unproven, orchard::builder::Unauthorized>,
@@ -23,16 +25,17 @@ type UnprovenIronwood = orchard::Bundle<
 /// Sign the transparent inputs, prove+sign the Ironwood bundle, freeze a v6 tx.
 ///
 /// `transparent` and `ironwood` must already be built (unsigned). Sapling is
-/// always `None`. Expiry is `target + DEFAULT_TX_EXPIRY_DELTA`.
+/// always `None`. Pass `target + DEFAULT_TX_EXPIRY_DELTA` for normal txs, or
+/// `BlockHeight::from(0)` when the tx must stay replayable (ceremony cache).
 pub fn assemble_v6_transparent_ironwood<P: Parameters>(
     network: &P,
     target: BlockHeight,
+    expiry: BlockHeight,
     transparent: Option<TransparentBundle<Unauthorized>>,
     ironwood: UnprovenIronwood,
     signing: &TransparentSigningSet,
 ) -> Result<Transaction> {
     let branch_id = BranchId::for_height(network, target);
-    let expiry = target + DEFAULT_TX_EXPIRY_DELTA;
 
     let unauthed: TransactionData<transaction::Unauthorized> = TransactionData::from_parts_v6(
         branch_id,

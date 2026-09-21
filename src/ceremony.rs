@@ -4,6 +4,8 @@
 //! no SNP, no loader, no production seed. Keep `ANCHOR_POOL_SIZE` and
 //! `MIN_TREASURY_ZATS` aligned with `zns-mint`.
 
+use std::path::Path;
+
 use anyhow::{anyhow, bail, Context, Result};
 use orchard::builder::{Builder as OrchardBuilder, BundleType};
 use orchard::bundle::BundleVersion;
@@ -88,6 +90,10 @@ pub async fn publish(zebra: &mut Zebrad) -> Result<()> {
         bail!("no mature coinbase to {taddr:?}; miner_address must be the FakeTee treasury t-addr");
     }
 
+    if try_cached_tx(zebra).await? {
+        return Ok(());
+    }
+
     let sk = treasury_usk
         .transparent()
         .derive_external_secret_key(child)
@@ -123,7 +129,66 @@ pub async fn publish(zebra: &mut Zebrad) -> Result<()> {
         .await
         .context("sendrawtransaction ceremony")?;
     zebra.generate_blocks(1).await?;
+    save_cached_tx(&hex);
     Ok(())
+}
+
+/// Broadcast the ceremony tx cached at `ZNS_CEREMONY_TX_CACHE`, if any.
+///
+/// The regtest chain up to `FIXTURE_HEIGHT` is reproducible (disable_pow,
+/// coinbase paying the deterministic all-zero-seed Treasury t-addr, fixed
+/// funding streams), so a ceremony tx signed on an earlier run spends the
+/// same mature coinbase outpoint and stays valid on a fresh chain — its
+/// proofs do not need to be reproduced. Broadcast-first with a proving
+/// fallback: a missing, stale, or rejected cache only costs time, never
+/// correctness.
+async fn try_cached_tx(zebra: &mut Zebrad) -> Result<bool> {
+    let Some(path) = std::env::var_os("ZNS_CEREMONY_TX_CACHE") else {
+        return Ok(false);
+    };
+    let display = || Path::new(&path).display();
+    let cached = match std::fs::read_to_string(&path) {
+        Ok(s) => s,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(e) => {
+            eprintln!("ceremony: cannot read {}: {e}; re-proving", display());
+            return Ok(false);
+        }
+    };
+    let Some(hex) = cached.lines().find(|l| !l.trim().is_empty()) else {
+        eprintln!("ceremony: cache file empty; re-proving");
+        return Ok(false);
+    };
+    let hex = hex.trim();
+    zebra.ensure_rpc().await?;
+    match zebra
+        .rpc("sendrawtransaction", serde_json::json!([hex]))
+        .await
+    {
+        Ok(v) => {
+            let txid = v.as_str().unwrap_or("?");
+            eprintln!("ceremony: broadcast cached {txid}");
+            zebra.generate_blocks(1).await?;
+            Ok(true)
+        }
+        Err(e) => {
+            eprintln!("ceremony: cached tx rejected ({e}); re-proving");
+            Ok(false)
+        }
+    }
+}
+
+fn save_cached_tx(hex: &str) {
+    let Some(path) = std::env::var_os("ZNS_CEREMONY_TX_CACHE") else {
+        return;
+    };
+    match std::fs::write(&path, hex) {
+        Ok(()) => eprintln!("ceremony: saved tx to {}", Path::new(&path).display()),
+        Err(e) => eprintln!(
+            "ceremony: could not save tx to {}: {e}",
+            Path::new(&path).display()
+        ),
+    }
 }
 
 pub(crate) fn account_usk(
@@ -337,7 +402,16 @@ fn build_ceremony_tx(
         .build::<ZatBalance>(&mut OsRng)?
         .expect("ironwood bundle exists");
 
-    assemble_v6_transparent_ironwood(network, target, transparent, ironwood, &signing)
+    // No expiry: a cached ceremony tx must stay replayable at whatever
+    // height the (re-mined) regtest chain has reached when it broadcasts.
+    assemble_v6_transparent_ironwood(
+        network,
+        target,
+        BlockHeight::from(0),
+        transparent,
+        ironwood,
+        &signing,
+    )
 }
 
 #[cfg(test)]
