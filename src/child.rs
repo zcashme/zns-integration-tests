@@ -46,7 +46,7 @@ impl ChildProcess {
             Some(s) => s.to_string(),
             None => "still running".to_string(),
         };
-        let tail = tail_lines(&self.log_text(), 40);
+        let tail = tail_lines(&self.log_text(), 80);
         if tail.is_empty() {
             format!("{}: {status}", self.name)
         } else {

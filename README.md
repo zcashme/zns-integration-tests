@@ -31,6 +31,15 @@ whitepaper vector). If mint logs a registration `txid=`, it must match
 the on-chain note. The test fails if mint treats that payment as a
 non-request, does not authorize alice, or rejects the Name Note.
 
+On the same chain after alice:
+
+- **Unhappy memos** (`src/non_request.rs`): three more Treasury payments
+  must log `non-request payment` and not register — garbage memo,
+  `ZNS:claim:alice:<ua>` (no term), and `Alice` (invalid name).
+- **User spend** (`src/bad_spend.rs`): `add_zns_spend` with the *user* FVK
+  and the `zns-verify` `(ψ, rcm)` opening must fail `FvkMismatch`
+  (recipient is Registry). Then `zns-verify` still finds the same claim.
+
 It does **not** check the following.
 
 - **TEE / network.** Mint runs FakeTee on regtest. There is no SEV-SNP
@@ -46,9 +55,10 @@ It does **not** check the following.
   txid only to catch `non-request payment` on that tx. The on-chain
   check is the *registration* tx (Name Note to Registry). It does not
   prove mint spent that specific payment note to fund the Name Note.
-- **Name Note spend-authority.** `zns-verify` checks decrypt + memo parse
-  + `cmx` reproduction. It does not check the nullifier, spend
-  authorization, or that only Registry can spend the note.
+- **Name Note spend as Registry.** The user-FVK attempt is rejected
+  before proving. The test does not spend alice with the Registry key
+  (update/release), publish a nullifier, or submit a forged bundle to
+  zebrad.
 - **Mint decoder / resolver.** Memo parse and `cmx` use `zns-verify`,
   not mint's inbound parser. Nothing queries a lightwalletd/resolver for
   `alice`.
