@@ -242,12 +242,13 @@ pub async fn load_registry_name_note(
     Ok(None)
 }
 
-/// `txid=` on the mint line that reports the Name Note is in flight.
+/// `txid=` on the mint line that reports the Name Note was submitted.
 pub fn registration_txid(log: &str, name: &str) -> Option<String> {
     for line in log.lines() {
-        let in_flight =
-            line.contains("NameNote order in flight") || line.contains("registration in flight");
-        if !(in_flight && line.contains(name)) {
+        let submitted = line.contains("NameNote order sent")
+            || line.contains("NameNote order in flight")
+            || line.contains("registration in flight");
+        if !(submitted && line.contains(name)) {
             continue;
         }
         let rest = line.split("txid=").nth(1)?;
@@ -297,10 +298,15 @@ mod tests {
 
     #[test]
     fn registration_txid_from_tracing_line() {
-        let log = "2026-09-17T11:28:01Z  INFO zns_mint: NameNote order in flight name=alice action=claim txid=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let log = "2026-09-21T16:10:50Z  INFO zns_mint: NameNote order sent — the wallet holds it until the chain answers txid=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa name=alice action=\"claim\"";
         assert_eq!(
             registration_txid(log, "alice").as_deref(),
             Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+        );
+        let legacy = "2026-09-17T11:28:01Z  INFO zns_mint: NameNote order in flight name=alice action=claim txid=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        assert_eq!(
+            registration_txid(legacy, "alice").as_deref(),
+            Some("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
         );
     }
 }

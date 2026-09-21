@@ -1,4 +1,4 @@
-//! Happy-path mint settlement: wait until alice's Name Note is in flight,
+//! Happy-path mint settlement: wait until mint submits alice's Name Note,
 //! mine it, and check fields with `zns-verify`.
 
 use std::time::{Duration, Instant};
@@ -40,7 +40,7 @@ pub async fn claim_alice(stack: &mut Stack) -> Result<VerifiedNameNote> {
                 stack.mint.exit_detail()
             );
         }
-        if mint_name_note_in_flight(&log, "alice") {
+        if mint_name_note_submitted(&log, "alice") {
             eprintln!("mint settled alice");
             let expected_txid = registration_txid(&log, "alice");
             let scan_from = stack.zebra.tip_height().await?;
@@ -95,9 +95,11 @@ pub async fn claim_alice(stack: &mut Stack) -> Result<VerifiedNameNote> {
     }
 }
 
-fn mint_name_note_in_flight(log: &str, name: &str) -> bool {
+fn mint_name_note_submitted(log: &str, name: &str) -> bool {
     log.contains(name)
-        && (log.contains("NameNote order in flight") || log.contains("registration in flight"))
+        && (log.contains("NameNote order sent")
+            || log.contains("NameNote order in flight")
+            || log.contains("registration in flight"))
 }
 
 fn mint_rejected_name_note(log: &str, name: &str) -> bool {
