@@ -166,7 +166,7 @@ async fn try_cached_tx(zebra: &mut Zebrad) -> Result<bool> {
         .await
     {
         Ok(v) => {
-            let txid = v.get("txid").and_then(|t| t.as_str()).unwrap_or("?");
+            let txid = v.as_str().unwrap_or("?");
             eprintln!("ceremony: broadcast cached {txid}");
             zebra.generate_blocks(1).await?;
             Ok(true)
@@ -332,6 +332,8 @@ fn build_ceremony_tx(
     let registry_fvk = orchard::keys::FullViewingKey::from(registry_usk.orchard());
     let treasury_fvk = orchard::keys::FullViewingKey::from(treasury_usk.orchard());
 
+    // No expiry: a cached ceremony tx must stay replayable at whatever
+    // height the (re-mined) regtest chain has reached when it broadcasts.
     let mut builder = Builder::new(
         *network,
         target,
@@ -342,7 +344,8 @@ fn build_ceremony_tx(
             orchard_padding: BundlePadding::UNPADDED,
             ironwood_padding: BundlePadding::UNPADDED,
         },
-    );
+    )
+    .with_expiry_height(BlockHeight::from(0));
     builder
         .add_transparent_p2pkh_input(pubkey, coin.outpoint, coin.coin)
         .map_err(|e| anyhow!("transparent input: {e}"))?;

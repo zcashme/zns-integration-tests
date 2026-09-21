@@ -24,12 +24,16 @@ async fn happy_path_claim_alice() -> Result<()> {
     let miner = miner_address()?;
     let mut zebra = Zebrad::start_with_miner(&miner).await?;
     zebra.generate_blocks(FIXTURE_HEIGHT).await?;
-    publish(&mut zebra).await?;
 
     let user = User::new()?;
     eprintln!("user miner: {}", user.miner_address);
     eprintln!("user UA: {}", user.ua);
+    // Fund the user BEFORE the ceremony: fund_user restarts zebra, which
+    // drops zebra's volatile non-finalized blocks (~35 deep). Funding
+    // after publish would erase the freshly mined ceremony block; funding
+    // first leaves the ceremony on finalized, restart-safe history.
     fund_user(&mut zebra, &user).await?;
+    publish(&mut zebra).await?;
 
     let mint_bin = mint_build.await.expect("mint build task")?;
     let mut mint = Mint::start(mint_bin).await?;

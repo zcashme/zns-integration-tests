@@ -130,7 +130,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: zns-integration-tests/ceremony-tx.hex
-          key: ceremony-tx-v1-${{ env.ZEBRAD_VERSION }}-${{ hashFiles('zns-integration-tests/src/ceremony.rs', 'zns-integration-tests/src/zebra.rs', 'zns-integration-tests/Cargo.lock') }}
+          key: ceremony-tx-v2-${{ env.ZEBRAD_VERSION }}-${{ hashFiles('zns-integration-tests/src/**', 'zns-integration-tests/tests/**', 'zns-integration-tests/Cargo.lock') }}
 
       - name: claim
         env:
