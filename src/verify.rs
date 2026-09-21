@@ -157,8 +157,9 @@ async fn scan_block(zebra: &Zebrad, height: u32) -> Result<Vec<VerifiedNameNote>
 /// `txid=` on the mint line that reports the Name Note is in flight.
 pub fn registration_txid(log: &str, name: &str) -> Option<String> {
     for line in log.lines() {
-        let in_flight =
-            line.contains("NameNote order in flight") || line.contains("registration in flight");
+        let in_flight = line.contains("NameNote order in flight")
+            || line.contains("registration in flight")
+            || line.contains("NameNote order sent");
         if !(in_flight && line.contains(name)) {
             continue;
         }
@@ -213,6 +214,16 @@ mod tests {
         assert_eq!(
             registration_txid(log, "alice").as_deref(),
             Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+        );
+    }
+
+    #[test]
+    fn registration_txid_from_order_sent_line() {
+        // zns-mint e8bbff7 reworded the order log; match both spellings.
+        let log = "2026-09-21T17:19:58Z  INFO zns_mint: NameNote order sent — the wallet holds it until the chain answers txid=4a2bf4f67b027357f34600c0b108d4fa9b1177338c72ad2267d0c4a5c4af3666 name=alice action=\"claim\"";
+        assert_eq!(
+            registration_txid(log, "alice").as_deref(),
+            Some("4a2bf4f67b027357f34600c0b108d4fa9b1177338c72ad2267d0c4a5c4af3666")
         );
     }
 }

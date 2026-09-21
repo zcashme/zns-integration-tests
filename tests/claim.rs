@@ -137,7 +137,9 @@ fn mint_submitted_vault_sweep(log: &str) -> bool {
 
 fn mint_name_note_in_flight(log: &str, name: &str) -> bool {
     log.contains(name)
-        && (log.contains("NameNote order in flight") || log.contains("registration in flight"))
+        && (log.contains("NameNote order in flight")
+            || log.contains("registration in flight")
+            || log.contains("NameNote order sent"))
 }
 
 fn mint_rejected_name_note(log: &str, name: &str) -> bool {
