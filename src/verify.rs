@@ -30,6 +30,22 @@ pub struct VerifiedNameNote {
     pub pk_d: [u8; 32],
 }
 
+/// On-chain Registry note plus the `zns-verify` opening inputs (for spend tests).
+pub struct LoadedRegistryNote {
+    pub orchard_note: orchard::Note,
+    pub memo: zns_verify::Memo,
+    pub cmx: zns_verify::ExtractedNoteCommitment,
+    pub rho: zns_verify::Rho,
+    pub g_d: [u8; 32],
+    pub pk_d: [u8; 32],
+}
+
+impl LoadedRegistryNote {
+    pub fn payload(&self) -> Result<zns_verify::NameNote<'_>> {
+        zns_verify::NameNote::parse(&self.memo).map_err(|e| anyhow!("Name Note memo parse: {e:?}"))
+    }
+}
+
 fn registry_fvk() -> Result<orchard::keys::FullViewingKey> {
     let usk = account_usk(&ceremony::regtest_network(), &DEV_SEED, 1)?;
     Ok(orchard::keys::FullViewingKey::from(usk.orchard()))
@@ -57,7 +73,7 @@ pub async fn wait_for_verified_name_note(
         if !mint.is_running() {
             bail!(
                 "mint died while waiting to mine the Name Note:\n{}",
-                mint.log_text()
+                mint.exit_detail()
             );
         }
         zebra.generate_blocks(1).await?;
@@ -71,7 +87,8 @@ pub async fn wait_for_verified_name_note(
     }
 }
 
-async fn find_verified_name_note(
+/// Find a verified Name Note for `name` already in `[from_height, tip]`.
+pub async fn find_verified_name_note(
     zebra: &Zebrad,
     from_height: u32,
     name: &str,
@@ -154,12 +171,84 @@ async fn scan_block(zebra: &Zebrad, height: u32) -> Result<Vec<VerifiedNameNote>
     Ok(found)
 }
 
-/// `txid=` on the mint line that reports the Name Note is in flight.
+/// Decrypt the Registry Name Note in `txid` at `height` (no extra mining).
+pub async fn load_registry_name_note(
+    zebra: &Zebrad,
+    height: u32,
+    txid: &str,
+    name: &str,
+) -> Result<Option<LoadedRegistryNote>> {
+    let network = ceremony::regtest_network();
+    let hex = zebra
+        .rpc("getblock", serde_json::json!([height.to_string(), 0]))
+        .await
+        .with_context(|| format!("getblock {height}"))?;
+    let hex = hex
+        .as_str()
+        .ok_or_else(|| anyhow!("getblock {height} was not hex"))?;
+    let bytes = hex::decode(hex).with_context(|| format!("decode block {height}"))?;
+    let block = Block::read(Cursor::new(bytes), &network)
+        .with_context(|| format!("parse block {height}"))?;
+
+    let fvk = registry_fvk()?;
+    let registry_addr = fvk.address_at(0u32, orchard::keys::Scope::External);
+
+    for tx in block.vtx() {
+        if tx.txid().to_string() != txid {
+            continue;
+        }
+        let Some(bundle) = tx.ironwood_bundle() else {
+            continue;
+        };
+        if bundle.bundle_version() != orchard::bundle::BundleVersion::ironwood_v3() {
+            continue;
+        }
+        for action in bundle.actions() {
+            let Some((note, recipient, memo_bytes, cmx)) =
+                zns_verify::decrypt::try_decrypt_ironwood(action, &fvk)
+            else {
+                continue;
+            };
+            if recipient != registry_addr {
+                continue;
+            }
+            let memo = zns_verify::Memo::from_array(*memo_bytes.as_array());
+            let payload = match zns_verify::NameNote::parse(&memo) {
+                Ok(n) => n,
+                Err(_) => continue,
+            };
+            if payload.name().as_str() != name {
+                continue;
+            }
+            let (g_d, pk_d) = recipient.zns_commitment_keys();
+            let rho = zns_verify::Rho::from_bytes(&action.rho().to_bytes())
+                .ok_or_else(|| anyhow!("non-canonical rho at height {height}"))?;
+            if !zns_verify::verify_name_note(&payload, g_d, pk_d, note.value().inner(), rho, cmx) {
+                bail!(
+                    "Registry-decryptable memo at height {height} tx {} failed zns-verify",
+                    tx.txid()
+                );
+            }
+            return Ok(Some(LoadedRegistryNote {
+                orchard_note: note,
+                memo,
+                cmx,
+                rho,
+                g_d,
+                pk_d,
+            }));
+        }
+    }
+    Ok(None)
+}
+
+/// `txid=` on the mint line that reports the Name Note was submitted.
 pub fn registration_txid(log: &str, name: &str) -> Option<String> {
     for line in log.lines() {
-        let in_flight =
-            line.contains("NameNote order in flight") || line.contains("registration in flight");
-        if !(in_flight && line.contains(name)) {
+        let submitted = line.contains("NameNote order sent")
+            || line.contains("NameNote order in flight")
+            || line.contains("registration in flight");
+        if !(submitted && line.contains(name)) {
             continue;
         }
         let rest = line.split("txid=").nth(1)?;
@@ -209,10 +298,15 @@ mod tests {
 
     #[test]
     fn registration_txid_from_tracing_line() {
-        let log = "2026-09-17T11:28:01Z  INFO zns_mint: NameNote order in flight name=alice action=claim txid=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let log = "2026-09-21T16:10:50Z  INFO zns_mint: NameNote order sent — the wallet holds it until the chain answers txid=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa name=alice action=\"claim\"";
         assert_eq!(
             registration_txid(log, "alice").as_deref(),
             Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+        );
+        let legacy = "2026-09-17T11:28:01Z  INFO zns_mint: NameNote order in flight name=alice action=claim txid=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        assert_eq!(
+            registration_txid(legacy, "alice").as_deref(),
+            Some("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
         );
     }
 }
