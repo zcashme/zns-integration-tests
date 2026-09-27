@@ -10,6 +10,10 @@ on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    # Daily e2e against the mint's main — the claim flow is the canary
+    # for integration breaks, not just integration-repo changes.
+    - cron: "0 6 * * *"
 
 permissions:
   contents: read
@@ -18,10 +22,9 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: "0"
   ZEBRAD_VERSION: "6.3.0"
-  # Pin the mint checkout: the harness matches mint's log wording
-  # verbatim, so master moving under us fails CI at random. Bump
-  # deliberately (log matchers may need updating with it).
-  ZNS_MINT_REF: "e8bbff7afb8adf18333a8259c2d5d1de278fb23d"
+  # Tracks the mint's main on purpose: the e2e exists to test the
+  # current mint. A red run is signal — fix the harness or the mint;
+  # never freeze the dependency.
 
 jobs:
   test:
@@ -71,7 +74,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: zcashme/zns-mint
-          ref: ${{ env.ZNS_MINT_REF }}
+          ref: master
           path: zns-mint
 
       - name: Install protoc
