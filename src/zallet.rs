@@ -207,16 +207,31 @@ impl Zallet {
     }
 
     /// Shield all mature coinbase into account 0's Orchard pool.
-    pub async fn shield_coinbase(&self) -> Result<()> {
+    /// Returns how many eligible coinbase UTXOs were left unshielded.
+    pub async fn shield_coinbase(&self) -> Result<u64> {
         let ua = self.orchard_ua().await?;
         let op = self
             .call("z_shieldcoinbase", json!([self.miner_address, ua]))
             .await?;
+        eprintln!("shield preflight: {op}");
+        let remaining = op
+            .get("remainingUTXOs")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
         let opid = extract_opid(&op)
             .ok_or_else(|| anyhow!("z_shieldcoinbase returned no operation id: {op}"))?
             .to_string();
         self.wait_for_operation(&opid).await?;
-        Ok(())
+        Ok(remaining)
+    }
+
+    /// Account 0's spendable Orchard balance, in zatoshis.
+    pub async fn orchard_spendable_zats(&self) -> Result<u64> {
+        let balances = self.call("z_getbalanceforaccount", json!([0])).await?;
+        Ok(balances
+            .pointer("/pools/orchard/spendable/valueZat")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0))
     }
 
     /// Spend from account 0 through `fund_source` (e.g. `"orchard"`),

@@ -21,6 +21,14 @@ const CLAIM_PAYMENT_ZEC: f64 = 2.0;
 
 const SYNC_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
 
+/// The run's spending plan — four 2.0 ZEC payments plus fees, with
+/// margin — as a spendable balance the wallet must actually hold
+/// before the run starts. One shield call can capture fewer mature
+/// coinbases than exist (seen on CI: 1 of 5), so funding loops until
+/// the balance is real, not assumed.
+const USER_BUDGET_ZATS: u64 = 900_000_000;
+const SHIELD_ROUNDS: usize = 4;
+
 /// A funded Zallet wallet playing the user.
 pub struct User {
     pub zallet: Zallet,
@@ -53,10 +61,26 @@ impl User {
 
         zallet.start_daemon().await?;
         zallet.wait_until_synced(target, SYNC_TIMEOUT).await?;
-        zallet.shield_coinbase().await?;
+        let mut remaining = zallet.shield_coinbase().await?;
         zebra.generate_blocks(1).await?; // confirm the shield tx
         let target = zebra.tip_height().await?;
         zallet.wait_until_synced(target, SYNC_TIMEOUT).await?;
+        for _ in 0..SHIELD_ROUNDS {
+            if zallet.orchard_spendable_zats().await? >= USER_BUDGET_ZATS {
+                break;
+            }
+            if remaining == 0 {
+                break;
+            }
+            remaining = zallet.shield_coinbase().await?;
+            zebra.generate_blocks(1).await?;
+            let target = zebra.tip_height().await?;
+            zallet.wait_until_synced(target, SYNC_TIMEOUT).await?;
+        }
+        let funded = zallet.orchard_spendable_zats().await?;
+        if funded < USER_BUDGET_ZATS {
+            bail!("user wallet holds {funded} spendable zats; the run needs {USER_BUDGET_ZATS}");
+        }
 
         let ua = zallet.orchard_ua().await?;
         eprintln!("user wallet miner: {}", zallet.miner_address);
