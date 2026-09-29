@@ -13,12 +13,13 @@ mod resolver;
 mod rpc;
 mod tx;
 mod verify;
+mod zallet;
 mod zebra;
 
 pub use bad_spend::user_cannot_spend_alice;
 pub use binaries::zebrad_bin;
 pub use ceremony::{miner_address, publish, treasury_ua, FIXTURE_HEIGHT};
-pub use claim::{fund_user, fund_user_coinbases, pay_claim, pay_treasury, User};
+pub use claim::User;
 pub use harness::Stack;
 pub use mint::Mint;
 pub use non_request::pay_invalid_memos;

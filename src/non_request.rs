@@ -8,9 +8,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{bail, Result};
 
-use crate::claim::pay_treasury;
 use crate::harness::Stack;
-
 /// Three memos on the same chain after a successful alice claim.
 ///
 /// - garbage: not a ZNS request at all
@@ -24,7 +22,7 @@ pub async fn pay_invalid_memos(stack: &mut Stack) -> Result<()> {
         ("invalid name", format!("ZNS:claim:forever:Alice:{ua}")),
     ];
     for (label, memo) in cases {
-        let txid = pay_treasury(&mut stack.zebra, &stack.user, memo.as_ref()).await?;
+        let txid = stack.user.pay_treasury(memo.as_ref()).await?;
         eprintln!("unhappy {label} txid {txid}");
         stack.zebra.generate_blocks(1).await?;
         wait_non_request(stack, &txid, label).await?;

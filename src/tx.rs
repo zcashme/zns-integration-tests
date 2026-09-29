@@ -15,8 +15,6 @@ use zcash_primitives::transaction::{self, Transaction, TransactionData};
 use zcash_protocol::consensus::{BlockHeight, BranchId, Parameters};
 use zcash_protocol::value::ZatBalance;
 
-pub use zcash_primitives::transaction::builder::DEFAULT_TX_EXPIRY_DELTA;
-
 type UnprovenIronwood = orchard::Bundle<
     orchard::builder::InProgress<orchard::builder::Unproven, orchard::builder::Unauthorized>,
     ZatBalance,

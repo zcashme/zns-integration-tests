@@ -84,6 +84,12 @@ impl Zebrad {
         Ok(zebrad)
     }
 
+    /// The zebrad state directory. A zallet-zebra backend opens it as a
+    /// read-only RocksDB secondary.
+    pub fn state_dir(&self) -> PathBuf {
+        self._dir.path().join("state")
+    }
+
     fn rpc_url(&self) -> String {
         format!("http://127.0.0.1:{}/", self.rpc_port)
     }
@@ -218,7 +224,7 @@ fn spawn_zebrad(bin: &Path, config_path: &Path, stderr_path: &Path) -> Result<Ch
         .with_context(|| format!("spawn zebrad ({})", bin.display()))
 }
 
-fn pick_port() -> Result<u16> {
+pub(crate) fn pick_port() -> Result<u16> {
     let listener = TcpListener::bind("127.0.0.1:0").context("bind ephemeral port")?;
     Ok(listener.local_addr()?.port())
 }

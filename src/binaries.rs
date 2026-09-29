@@ -46,6 +46,12 @@ pub fn resolver_bin_override() -> Option<PathBuf> {
     resolve_bin("ZNS_RESOLVER_BIN", "zns-resolver")
 }
 
+/// The `zallet` binary: a backend binary (`zallet-zebra`), which shares
+/// zallet's full CLI surface.
+pub fn zallet_bin() -> Option<PathBuf> {
+    resolve_bin("ZALLET_BIN", "zallet-zebra")
+}
+
 fn which(name: &str) -> Option<PathBuf> {
     let paths = std::env::var_os("PATH")?;
     std::env::split_paths(&paths).find_map(|dir| {
