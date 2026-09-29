@@ -91,13 +91,15 @@ impl Zallet {
 
     /// Spawn the daemon and wait for its JSON-RPC. Zebrad must be running.
     pub async fn start_daemon(&mut self) -> Result<()> {
+        let datadir = self
+            .datadir
+            .path()
+            .to_str()
+            .ok_or_else(|| anyhow!("zallet datadir path is not utf-8"))?;
         let log = std::fs::File::create(&self.log_path).context("create zallet.log")?;
         let log2 = log.try_clone().context("clone zallet.log")?;
         let child = Command::new(&self.bin)
-            .args([
-                "--datadir",
-                self.datadir.path().to_str().expect("utf-8 path"),
-            ])
+            .args(["--datadir", datadir])
             .arg("start")
             .stdin(Stdio::null())
             .stdout(Stdio::from(log))
@@ -309,6 +311,9 @@ fn run_with_stdout(
     log_path: &Path,
     args: &[&str],
 ) -> Result<std::process::Output> {
+    let datadir = datadir
+        .to_str()
+        .ok_or_else(|| anyhow!("zallet datadir path is not utf-8"))?;
     let log = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -316,7 +321,7 @@ fn run_with_stdout(
         .context("open zallet cli log")?;
     let log2 = log.try_clone().context("clone zallet cli log")?;
     Command::new(bin)
-        .args(["--datadir", datadir.to_str().expect("utf-8 path")])
+        .args(["--datadir", datadir])
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
