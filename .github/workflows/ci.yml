@@ -85,12 +85,21 @@ jobs:
         with:
           components: rustfmt, clippy
 
+      - name: Checkout zallet
+        uses: actions/checkout@v4
+        with:
+          repository: zcash/zallet
+          # Pinned rev of the zebra-backend workspace; bump deliberately.
+          ref: f9dcd4d31439feb813c95ac2516814421f5b04df
+          path: zallet
+
       - name: Cache cargo registry and target
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: |
             zns-integration-tests
             zns-mint
+            zallet/backends/zebra
 
       - name: Install zebrad
         working-directory: ${{ github.workspace }}
@@ -106,6 +115,13 @@ jobs:
           test -n "$bin"
           chmod +x "$bin"
           echo "ZEBRAD_BIN=${GITHUB_WORKSPACE}/${bin#./}" >> "$GITHUB_ENV"
+
+      - name: Build zallet (zebra backend)
+        working-directory: ${{ github.workspace }}/zallet/backends/zebra
+        run: cargo build --locked --release
+
+      - name: Export zallet binary path
+        run: echo "ZALLET_BIN=${{ github.workspace }}/zallet/backends/zebra/target/release/zallet-zebra" >> "$GITHUB_ENV"
 
       - name: Cache Sapling params
         uses: actions/cache@v4
