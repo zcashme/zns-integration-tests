@@ -22,12 +22,11 @@ const CLAIM_PAYMENT_ZEC: f64 = 2.0;
 const SYNC_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
 
 /// The run's spending plan — four 2.0 ZEC payments plus fees, with
-/// margin — as a spendable balance the wallet must actually hold
-/// before the run starts. One shield call can capture fewer mature
-/// coinbases than exist (seen on CI: 1 of 5), so funding loops until
-/// the balance is real, not assumed.
+/// margin — as the spendable shielded balance the wallet must hold
+/// before the run starts. Funded by waiting for the wallet's scan to
+/// reach the node's mature-coinbase truth, then one shield, so the
+/// budget is real, not assumed.
 const USER_BUDGET_ZATS: u64 = 900_000_000;
-const SHIELD_ROUNDS: usize = 4;
 
 /// A funded Zallet wallet playing the user.
 pub struct User {
@@ -61,26 +60,23 @@ impl User {
 
         zallet.start_daemon().await?;
         zallet.wait_until_synced(target, SYNC_TIMEOUT).await?;
-        let mut remaining = zallet.shield_coinbase().await?;
+        // The wallet's scan must actually reach the chain before shielding:
+        // the balance scan trails the sync engine (status-synced is not
+        // scan-complete), and the shield snapshots whatever the wallet has
+        // scanned so far — seen on CI as a shield capturing 1 of 5 mature
+        // coinbases. Wait until the wallet's coinbase-spendable view equals
+        // the node's mature-coinbase truth, then shield once.
+        let truth = crate::ceremony::mature_coinbase_zats(zebra, &zallet.miner_address).await?;
+        zallet.wait_until_sees_coinbase(truth, SYNC_TIMEOUT).await?;
+        zallet.shield_coinbase().await?;
         zebra.generate_blocks(1).await?; // confirm the shield tx
         let target = zebra.tip_height().await?;
         zallet.wait_until_synced(target, SYNC_TIMEOUT).await?;
-        for _ in 0..SHIELD_ROUNDS {
-            if zallet.orchard_spendable_zats().await? >= USER_BUDGET_ZATS {
-                break;
-            }
-            if remaining == 0 {
-                break;
-            }
-            remaining = zallet.shield_coinbase().await?;
-            zebra.generate_blocks(1).await?;
-            let target = zebra.tip_height().await?;
-            zallet.wait_until_synced(target, SYNC_TIMEOUT).await?;
-        }
-        let funded = zallet.orchard_spendable_zats().await?;
-        if funded < USER_BUDGET_ZATS {
-            bail!("user wallet holds {funded} spendable zats; the run needs {USER_BUDGET_ZATS}");
-        }
+        // The fresh shielded note lands in the scan after the confirming
+        // block — wait for the budget instead of asserting it on arrival.
+        zallet
+            .wait_until_shielded(USER_BUDGET_ZATS, SYNC_TIMEOUT)
+            .await?;
 
         let ua = zallet.orchard_ua().await?;
         eprintln!("user wallet miner: {}", zallet.miner_address);

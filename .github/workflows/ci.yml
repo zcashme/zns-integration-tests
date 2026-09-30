@@ -85,14 +85,6 @@ jobs:
         with:
           components: rustfmt, clippy
 
-      - name: Cache cargo registry and target
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: |
-            zns-integration-tests
-            zns-mint
-            zallet/backends/zebra
-
       - name: Checkout zallet
         uses: actions/checkout@v4
         with:
@@ -100,6 +92,14 @@ jobs:
           # Pinned rev of the zebra-backend workspace; bump deliberately.
           ref: f9dcd4d31439feb813c95ac2516814421f5b04df
           path: zallet
+
+      - name: Cache cargo registry and target
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            zns-integration-tests
+            zns-mint
+            zallet/backends/zebra
 
       - name: Install zebrad
         working-directory: ${{ github.workspace }}

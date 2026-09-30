@@ -70,6 +70,37 @@ pub fn miner_address() -> Result<String> {
     Ok(encode_transparent_address_p(&network, &addr))
 }
 
+/// The total value of **mature** coinbase paid to `address`, per the
+/// node — the ground truth the wallet's coinbase-spendable view must
+/// reach before it shields, so the shield captures every UTXO, not a
+/// mid-scan prefix.
+///
+/// Mature is zebra's inclusive rule — coinbase at height `h` is
+/// spendable once `h + COINBASE_MATURITY <= tip + 1` — which is the
+/// rule the wallet's balance buckets apply (verified against the
+/// pinned rev: `z_getbalances` parks immature coinbase in
+/// `transparent.coinbase.pending`, and `z_getbalanceforaccount`'s
+/// flat `transparent.valueZat` is regular + mature coinbase only, so
+/// an unmatured total is a target the wallet can never reach).
+pub async fn mature_coinbase_zats(zebra: &Zebrad, address: &str) -> Result<u64> {
+    let tip = zebra.tip_height().await?;
+    let utxos: Vec<AddressUtxo> = serde_json::from_value(
+        zebra
+            .rpc(
+                "getaddressutxos",
+                serde_json::json!([{ "addresses": [address] }]),
+            )
+            .await
+            .context("getaddressutxos")?,
+    )
+    .context("getaddressutxos response")?;
+    Ok(utxos
+        .into_iter()
+        .filter(|u| u.height + COINBASE_MATURITY <= tip + 1)
+        .map(|u| u.satoshis)
+        .sum())
+}
+
 /// Mine-mature coinbase, then one Ironwood shielding tx: 40 zero-value
 /// Registry outputs + a Treasury note covering the remainder after ZIP-317.
 pub async fn publish(zebra: &mut Zebrad) -> Result<()> {

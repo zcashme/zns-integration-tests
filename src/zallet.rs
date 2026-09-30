@@ -161,6 +161,11 @@ impl Zallet {
     ///
     /// `getwalletstatus.locked` is true while the sync engine has not fully
     /// synced; spend and balance RPCs refuse to operate in that state.
+    /// Poll until the wallet has actually scanned to `target`.
+    ///
+    /// `wallet_tip` and `locked` alone are vacuously satisfied right
+    /// after daemon start, before the first scan; `fully_synced_height`
+    /// only climbs with real scan progress, so it is the wait's substance.
     pub async fn wait_until_synced(&self, target: u32, timeout: Duration) -> Result<()> {
         let deadline = Instant::now() + timeout;
         loop {
@@ -169,18 +174,76 @@ impl Zallet {
                     .pointer("/wallet_tip/height")
                     .and_then(|h| h.as_u64())
                     .unwrap_or(0);
+                let fully = status
+                    .get("fully_synced_height")
+                    .and_then(|h| h.as_u64())
+                    .unwrap_or(0);
                 let locked = status
                     .get("locked")
                     .and_then(|l| l.as_bool())
                     .unwrap_or(true);
-                if height >= u64::from(target) && !locked {
+                if height >= u64::from(target) && fully >= u64::from(target) && !locked {
                     return Ok(());
                 }
             }
             if Instant::now() >= deadline {
                 bail!("zallet did not sync to height {target} within {timeout:?}");
             }
-            tokio::time::sleep(Duration::from_millis(500)).await;
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+
+    /// Poll until the wallet's coinbase-spendable view — `z_getbalances`'
+    /// per-account `transparent.coinbase.spendable` bucket — reaches
+    /// `expected_zats`, the node's total **mature** coinbase to the miner
+    /// address, so a shield sees every UTXO, not a mid-scan prefix.
+    ///
+    /// Status sync (`wait_until_synced`) is not enough here: the balance
+    /// scan trails the sync engine (measured ~3.4 s for 210 blocks
+    /// locally; on CI the gap left a shield capturing 1 of 5 mature
+    /// coinbases), and the buckets are spendable-only, so the mature
+    /// total is the one reachable target.
+    pub async fn wait_until_sees_coinbase(
+        &self,
+        expected_zats: u64,
+        timeout: Duration,
+    ) -> Result<()> {
+        let deadline = Instant::now() + timeout;
+        loop {
+            if let Ok(balances) = self.call("z_getbalances", json!([])).await {
+                let seen = balances
+                    .pointer("/accounts/0/transparent/coinbase/spendable/valueZat")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
+                if seen >= expected_zats {
+                    return Ok(());
+                }
+            }
+            if Instant::now() >= deadline {
+                bail!("wallet never saw {expected_zats} mature coinbase zats within {timeout:?}");
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+
+    /// Poll until account 0's spendable shielded balance reaches
+    /// `min_zats`. The wallet's own scan of its fresh shielded note
+    /// trails the confirming block, so the fund budget is a wait, not
+    /// an immediate assert.
+    pub async fn wait_until_shielded(&self, min_zats: u64, timeout: Duration) -> Result<()> {
+        let deadline = Instant::now() + timeout;
+        loop {
+            let have = self.shielded_spendable_zats().await?;
+            if have >= min_zats {
+                return Ok(());
+            }
+            if Instant::now() >= deadline {
+                bail!(
+                    "wallet never held {min_zats} spendable shielded zats \
+                     within {timeout:?} (last seen: {have})"
+                );
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
         }
     }
 
@@ -225,13 +288,22 @@ impl Zallet {
         Ok(remaining)
     }
 
-    /// Account 0's spendable Orchard balance, in zatoshis.
-    pub async fn orchard_spendable_zats(&self) -> Result<u64> {
+    /// Account 0's spendable shielded balance, in zatoshis: the `orchard`
+    /// pool plus `ironwood`, its NU6.3 sibling. Ironwood (ZIP 2005) notes
+    /// are Orchard-shaped, and funds received to an Orchard receiver once
+    /// NU6.3 is active are reported under `ironwood` (per the pinned
+    /// rev's own RPC docs) — reading `orchard` alone is always zero on
+    /// this chain. `z_getbalanceforaccount` reports each pool flat
+    /// (`valueZat`, spendable only; zero pools omitted).
+    pub async fn shielded_spendable_zats(&self) -> Result<u64> {
         let balances = self.call("z_getbalanceforaccount", json!([0])).await?;
-        Ok(balances
-            .pointer("/pools/orchard/spendable/valueZat")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0))
+        let pool = |name: &str| {
+            balances
+                .pointer(&format!("/pools/{name}/valueZat"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0)
+        };
+        Ok(pool("orchard") + pool("ironwood"))
     }
 
     /// Spend from account 0 through `fund_source` (e.g. `"orchard"`),
