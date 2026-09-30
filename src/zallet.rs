@@ -33,6 +33,9 @@ pub struct Zallet {
     datadir: TempDir,
     log_path: PathBuf,
     rpc_port: u16,
+    /// One client for every RPC call — polling loops fire every 50–500 ms,
+    /// so a client-per-call would churn fresh connection pools the whole run.
+    http: reqwest::Client,
     /// Transparent address zebrad mines to so this wallet holds coinbase.
     pub miner_address: String,
 }
@@ -79,12 +82,17 @@ impl Zallet {
             bail!("zallet regtest helper printed no miner address");
         }
 
+        let http = reqwest::Client::builder()
+            .build()
+            .context("build zallet rpc client")?;
+
         Ok(Self {
             child: None,
             bin,
             datadir,
             log_path,
             rpc_port,
+            http,
             miner_address,
         })
     }
@@ -143,7 +151,8 @@ impl Zallet {
     /// Issue a JSON-RPC call, returning the `result` on success.
     pub async fn call(&self, method: &str, params: Value) -> Result<Value> {
         let body = json!({ "jsonrpc": "1.0", "id": "harness", "method": method, "params": params });
-        let resp = reqwest::Client::new()
+        let resp = self
+            .http
             .post(self.rpc_url())
             .basic_auth(RPC_USER, Some(RPC_PASS))
             .json(&body)
@@ -335,6 +344,9 @@ impl Zallet {
             .ok_or_else(|| anyhow!("z_sendfromaccount returned no operation id: {op}"))?
             .to_string();
         let entry = self.wait_for_operation(&opid).await?;
+        if entry.pointer("/result/broadcast").and_then(|b| b.as_bool()) != Some(true) {
+            bail!("zallet recorded but did not broadcast the send: {entry}");
+        }
         entry
             .pointer("/result/txid")
             .and_then(|t| t.as_str())

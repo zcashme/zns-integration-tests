@@ -90,6 +90,10 @@ impl User {
 
     /// Spend shielded funds to the Treasury with `memo_text`; returns the txid.
     pub async fn pay_treasury(&self, memo_text: &str) -> Result<String> {
+        // Belt-and-braces: refuse to spend while the wallet reports itself
+        // locked (only ever true around daemon start; a mid-run block does
+        // not flip it, but the wait is free).
+        self.zallet.wait_until_synced(0, SYNC_TIMEOUT).await?;
         let memo_hex: String = memo_text.bytes().map(|b| format!("{b:02x}")).collect();
         let recipients = json!([
             {
