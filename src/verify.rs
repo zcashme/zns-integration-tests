@@ -12,7 +12,7 @@ use crate::mint::Mint;
 use crate::zebra::Zebrad;
 
 /// Whitepaper §3.5 Registry `(g_d, pk_d)` for the all-zero seed (ZIP-32 is
-/// network-independent, so FakeTee regtest matches the mainnet vector).
+/// network-independent, so a local regtest matches the mainnet vector).
 pub const VECTOR_G_D: &str = "de4338f2ab9fd8300a3a1c20dd690ce27026c6001c295d7c641a067ce809b11e";
 pub const VECTOR_PK_D: &str = "6df609f5710f3b5deecd4ee4b8f0173b44af6cf8918ac00269526031ba628996";
 
@@ -56,7 +56,7 @@ fn commitment_keys_for_fvk(fvk: &orchard::keys::FullViewingKey) -> ([u8; 32], [u
         .zns_commitment_keys()
 }
 
-/// ZIP-32 `g_d` / `pk_d` of the FakeTee Registry address (account 1, j=0).
+/// ZIP-32 `g_d` / `pk_d` of the all-zero Registry address (account 1, j=0).
 pub fn registry_commitment_keys() -> Result<([u8; 32], [u8; 32])> {
     Ok(commitment_keys_for_fvk(&registry_fvk()?))
 }
@@ -282,10 +282,10 @@ mod tests {
     }
 
     #[test]
-    fn fake_tee_registry_keys_are_stable() {
+    fn local_registry_keys_are_stable() {
         let (g_d, pk_d) = registry_commitment_keys().expect("derive");
         // LocalNetwork coin_type is 1, not mainnet 133, so these are not the
-        // whitepaper vector. Pin the FakeTee identity ceremony and mint share.
+        // whitepaper vector. Pin the local-test identity ceremony and mint share.
         assert_eq!(
             hex::encode(g_d),
             "ce684b50f15484a2a7f4a6625bffc14f7181940b378b467b0dcf583948386da4"

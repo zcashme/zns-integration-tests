@@ -1,4 +1,4 @@
-//! Shared e2e bring-up: zebrad, FakeTee ceremony, mint, funded user.
+//! Shared e2e bring-up: zebrad, dev ceremony, mint, funded user.
 
 use std::time::{Duration, Instant};
 

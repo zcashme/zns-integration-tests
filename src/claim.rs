@@ -4,7 +4,7 @@
 //! The user is a genuine wallet — its own generated mnemonic, its own scan —
 //! not in-process signing: zebrad mines coinbase to the wallet's transparent
 //! address, `z_shieldcoinbase` moves it to Orchard, and claims pay through
-//! `z_sendfromaccount`. Distinct from the FakeTee mint seed (`[0; 32]`) by
+//! `z_sendfromaccount`. Distinct from the all-zero mint seed (`[0; 32]`) by
 //! construction; nothing in the harness holds the user's seed.
 
 use anyhow::{bail, Result};
