@@ -1,4 +1,4 @@
-//! Spawn `zns-mint` built with `--features regtest,fake-tee`.
+//! Spawn `zns-mint` built with `--features regtest`.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -10,8 +10,9 @@ use tempfile::TempDir;
 use crate::binaries::{cargo_build_bin_with, mint_bin_override, sibling_dir};
 use crate::child::ChildProcess;
 
-/// Halo2 in a debug mint binary is too slow for vault sweep. `fake-tee`
-/// cannot be `--release`, so raise opt-level on the proving crates.
+/// Halo2 in a debug mint binary is too slow for vault sweep. Regtest
+/// selects non-tee, which release builds refuse, so raise opt-level on
+/// the proving crates.
 const MINT_DEV_OPT: &[&str] = &[
     "--config",
     "profile.dev.package.orchard.opt-level=3",
@@ -35,7 +36,7 @@ impl Mint {
         cargo_build_bin_with(
             &sibling_dir("zns-mint"),
             "zns-mint",
-            &["--features", "regtest,fake-tee"],
+            &["--features", "regtest"],
             MINT_DEV_OPT,
         )
     }
@@ -49,7 +50,7 @@ impl Mint {
             std::fs::copy(&capsule, &dest)
                 .with_context(|| format!("copy capsule from {}", capsule.display()))?;
         } else {
-            write_fake_capsule(dir.path())?;
+            write_dev_capsule(&dest)?;
         }
         if !dest.is_file() {
             bail!("mint working dir has no {}", dest.display());
@@ -118,32 +119,17 @@ impl Mint {
     }
 }
 
-/// Seal an all-zero seed with mint's `write_fake_capsule` example into `cwd/keys/`.
-fn write_fake_capsule(cwd: &Path) -> Result<()> {
-    let mint_dir = sibling_dir("zns-mint");
-    let manifest = mint_dir.join("Cargo.toml");
-    let status = Command::new("cargo")
-        .current_dir(cwd)
-        .args(MINT_DEV_OPT)
-        .args([
-            "run",
-            "--manifest-path",
-            manifest.to_str().expect("utf-8 path"),
-            "--example",
-            "write_fake_capsule",
-            "--features",
-            "fake-tee",
-        ])
-        .status()
-        .context("spawn cargo run --example write_fake_capsule")?;
-    if !status.success() {
-        bail!(
-            "cargo run --example write_fake_capsule failed ({status}); \
-             zns-mint at {} must include that example and --features fake-tee",
-            mint_dir.display()
-        );
-    }
-    Ok(())
+/// Seal the all-zero test seed with the public test key.
+fn write_dev_capsule(dest: &Path) -> Result<()> {
+    let key = zns_canon::sealing::dev_sealing_key(zns_canon::capsule::CAPSULE_KEY_CONTEXT);
+    let capsule = zns_canon::capsule::seal_seed(
+        &key,
+        &secrecy::Secret::new([0u8; zns_canon::capsule::SEED_LEN]),
+        &mut rand::rngs::OsRng,
+    )
+    .context("seal dev capsule")?;
+    let bytes = zns_canon::capsule::serialize_capsule(&capsule).context("serialize dev capsule")?;
+    std::fs::write(dest, bytes).with_context(|| format!("write {}", dest.display()))
 }
 
 fn capsule_source() -> Option<PathBuf> {

@@ -3,9 +3,9 @@
 Local process harness for the Zcash Name Service: `zebrad` (regtest), a real
 [`zallet`](https://github.com/zcash/zallet) wallet as the user, and
 [`zns-mint`](https://github.com/zcashme/zns-mint). Mint is built with
-`--features regtest,fake-tee` from `../zns-mint` (override with
+`--features regtest` from `../zns-mint` (override with
 `$ZNS_MINT_DIR` / `$ZNS_MINT_BIN`). If no capsule is provided, the harness
-runs mint's `write_fake_capsule` example (FakeTee, all-zero seed).
+seals an all-zero seed with the public test key.
 
 Before mint starts, the harness mines 104 blocks and publishes a **dev**
 ceremony: 40 zero-value Registry Ironwood notes plus a Treasury Ironwood
@@ -25,7 +25,7 @@ wallet (encryption identity, generated mnemonic, account 0 + miner
 address), mines coinbase to it, shields with `z_shieldcoinbase`, and pays
 claims through `z_sendfromaccount`.
 
-`claim` (`happy_path_claim_alice`) is a FakeTee **regtest** happy path, not a
+`claim` (`happy_path_claim_alice`) is a local **regtest** happy path, not a
 TEE or mainnet audit. The Zallet user wallet pays Treasury
 `ZNS:claim:forever:alice:<user UA>` (overpay: a fixed 2.0 ZEC, above
 mint's oracle-priced fee). The test waits for mint to log the Name Note in
@@ -35,7 +35,7 @@ trial-decrypt under the Registry FVK, recipient is Registry j=0, memo
 parses, and `verify_name_note` reproduces `cmx` from the memo fields,
 `(g_d, pk_d)`, value, and `rho`. Asserted fields: name `alice`, action
 `claim`, UA is this user, `expires_at=none`, value 0, `(g_d, pk_d)` are
-the FakeTee Registry keys (LocalNetwork coin_type 1; not the mainnet
+the local-test Registry keys (LocalNetwork coin_type 1; not the mainnet
 whitepaper vector). If mint logs a registration `txid=`, it must match
 the on-chain note. The test fails if mint treats that payment as a
 non-request, does not authorize alice, or rejects the Name Note.
@@ -53,7 +53,7 @@ On the same chain after alice:
 
 It does **not** check the following.
 
-- **TEE / network.** Mint runs FakeTee on regtest. There is no SEV-SNP
+- **TEE / network.** On regtest the mint uses the public test key. There is no SEV-SNP
   attestation, no production seed capsule, and Registry `(g_d, pk_d)` are
   LocalNetwork (coin_type 1), not the mainnet whitepaper vector.
 - **Vault sweep.** After boot, Treasury may try to move excess to the

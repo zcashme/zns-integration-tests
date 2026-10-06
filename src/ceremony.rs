@@ -1,6 +1,6 @@
-//! Dev-only Registry ceremony + Treasury funding for FakeTee mint boot.
+//! Dev-only Registry ceremony + Treasury funding for local mint boot.
 //!
-//! Same all-zero ZIP-32 seed as mint's `write_fake_capsule`. Not keygen:
+//! Same all-zero ZIP-32 seed the harness seals for dev boot. Not keygen:
 //! no SNP, no loader, no production seed. Keep `ANCHOR_POOL_SIZE` and
 //! `MIN_TREASURY_ZATS` aligned with `zns-mint`.
 
@@ -118,7 +118,9 @@ pub async fn publish(zebra: &mut Zebrad) -> Result<()> {
 
     let coins = collect_mature_coinbase(zebra, &network, &taddr, tip).await?;
     if coins.is_empty() {
-        bail!("no mature coinbase to {taddr:?}; miner_address must be the FakeTee treasury t-addr");
+        bail!(
+            "no mature coinbase to {taddr:?}; miner_address must be the all-zero treasury t-addr"
+        );
     }
 
     if try_cached_tx(zebra).await? {

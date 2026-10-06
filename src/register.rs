@@ -13,7 +13,7 @@ use crate::verify::{
 /// Pay Treasury `ZNS:claim:forever:alice:<ua>`, wait for mint, verify on chain.
 ///
 /// Checks: mint logs in-flight (not rejected / non-request / unauthorized);
-/// `zns-verify` decrypt + `cmx`; fields alice/claim/user UA/`none`/0/FakeTee keys;
+/// `zns-verify` decrypt + `cmx`; fields alice/claim/user UA/`none`/0/local-test keys;
 /// mint `txid=` matches the on-chain registration tx if present.
 pub async fn claim_alice(stack: &mut Stack) -> Result<VerifiedNameNote> {
     let claim_txid = stack.user.pay_claim("alice").await?;
