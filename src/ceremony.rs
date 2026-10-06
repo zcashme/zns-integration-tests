@@ -1,6 +1,6 @@
 //! Dev-only Registry ceremony + Treasury funding for FakeTee mint boot.
 //!
-//! Same all-zero ZIP-32 seed as mint's `write_fake_capsule`. Not keygen:
+//! Same all-zero ZIP-32 seed the harness seals for dev boot. Not keygen:
 //! no SNP, no loader, no production seed. Keep `ANCHOR_POOL_SIZE` and
 //! `MIN_TREASURY_ZATS` aligned with `zns-mint`.
 

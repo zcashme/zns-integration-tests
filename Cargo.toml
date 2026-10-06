@@ -11,6 +11,7 @@ description = "Cross-stack harness for ZNS: zebra, mint, resolver"
 anyhow = "1"
 hex = "0.4"
 rand = "0.8"
+secrecy = "0.8"
 reqwest = { version = "0.12", default-features = false, features = ["json", "default-tls"] }
 secp256k1 = "0.29"
 serde = { version = "1", features = ["derive"] }
@@ -29,6 +30,8 @@ zip32 = "0.2.1"
 # `decrypt` is zns-verify's ZnsIronwoodDomain scan (same orchard tag as the
 # patch below). Ceremony/claim still need orchard for proving.
 zns-verify = { git = "https://github.com/zcashme/zns-verify.git", tag = "v0.1.1", features = ["decrypt"] }
+# Public key for sealing the all-zero test capsule. A release build cannot use this.
+zns-canon = { git = "https://github.com/zcashme/zns-canon.git", branch = "main", features = ["non-tee"] }
 
 [patch.crates-io]
 orchard = { git = "https://github.com/zcashme/orchard.git", tag = "zns-orchard-v0.15.5.2" }

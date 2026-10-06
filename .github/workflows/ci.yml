@@ -1,6 +1,6 @@
-# Lint this crate; claim e2e (zebrad + FakeTee mint) on PRs and main.
+# Lint this crate; claim e2e (zebrad + local test mint) on PRs and main.
 #
-# The claim job publishes a FakeTee ceremony + Treasury, installs Sapling
+# The claim job publishes a dev ceremony + Treasury, installs Sapling
 # params, and runs mint. Price fetch uses live HTTPS.
 name: CI
 
