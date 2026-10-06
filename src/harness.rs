@@ -4,9 +4,9 @@ use std::time::{Duration, Instant};
 
 use anyhow::{bail, Result};
 
-use crate::binaries::zebrad_bin;
+use crate::binaries::{zallet_bin, zebrad_bin};
 use crate::ceremony::{miner_address, publish, FIXTURE_HEIGHT};
-use crate::claim::{fund_user_coinbases, User};
+use crate::claim::User;
 use crate::mint::Mint;
 use crate::zebra::Zebrad;
 
@@ -28,18 +28,29 @@ impl Stack {
             eprintln!("skipping: zebrad not found (set ZEBRAD_BIN or put zebrad on PATH)");
             return Ok(None);
         }
+        if zallet_bin().is_none() {
+            if std::env::var_os("CI").is_some() {
+                bail!("zallet required in CI — set ZALLET_BIN");
+            }
+            eprintln!("skipping: zallet not found (set ZALLET_BIN or put zallet-zebra on PATH)");
+            return Ok(None);
+        }
 
         let mint_build = tokio::task::spawn_blocking(Mint::build);
 
         let miner = miner_address()?;
         let mut zebra = Zebrad::start_with_miner(&miner).await?;
         zebra.generate_blocks(FIXTURE_HEIGHT).await?;
-        publish(&mut zebra).await?;
 
-        let user = User::new()?;
+        // Fund the user BEFORE the ceremony: the wallet bring-up restarts
+        // zebrad, which drops zebra's volatile non-finalized blocks (~35
+        // deep). Funding after publish would erase the freshly mined
+        // ceremony block; funding first leaves the ceremony on finalized,
+        // restart-safe history.
+        let user = User::fund(&mut zebra, mature_user_coins).await?;
         eprintln!("user miner: {}", user.miner_address);
         eprintln!("user UA: {}", user.ua);
-        fund_user_coinbases(&mut zebra, &user, mature_user_coins).await?;
+        publish(&mut zebra).await?;
 
         let mint_bin = mint_build.await.expect("mint build task")?;
         let mut mint = Mint::start(mint_bin).await?;

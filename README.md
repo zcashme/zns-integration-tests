@@ -1,6 +1,7 @@
 # zns-integration-tests
 
-Local process harness for the Zcash Name Service: `zebrad` (regtest) and
+Local process harness for the Zcash Name Service: `zebrad` (regtest), a real
+[`zallet`](https://github.com/zcash/zallet) wallet as the user, and
 [`zns-mint`](https://github.com/zcashme/zns-mint). Mint is built with
 `--features regtest` from `../zns-mint` (override with
 `$ZNS_MINT_DIR` / `$ZNS_MINT_BIN`). If no capsule is provided, the harness
@@ -16,10 +17,18 @@ export ZEBRAD_BIN=/path/to/zebrad
 cargo test --test claim -- --nocapture
 ```
 
+The user is a **Zallet wallet** (`$ZALLET_BIN`, or `zallet-zebra` on
+`$PATH`): build the zebra backend of a zallet checkout with
+`cargo build --locked --release` in `backends/zebra` and point `ZALLET_BIN`
+at `target/release/zallet-zebra`. The harness provisions a fresh regtest
+wallet (encryption identity, generated mnemonic, account 0 + miner
+address), mines coinbase to it, shields with `z_shieldcoinbase`, and pays
+claims through `z_sendfromaccount`.
+
 `claim` (`happy_path_claim_alice`) is a local **regtest** happy path, not a
-TEE or mainnet audit. A second ZIP-32 user (seed `[1; 32]`, not mint's
-all-zero seed) pays Treasury `ZNS:claim:forever:alice:<user UA>` (overpay:
-coinbase minus ZIP-317). The test waits for mint to log the Name Note in
+TEE or mainnet audit. The Zallet user wallet pays Treasury
+`ZNS:claim:forever:alice:<user UA>` (overpay: a fixed 2.0 ZEC, above
+mint's oracle-priced fee). The test waits for mint to log the Name Note in
 flight, mines it, and checks the on-chain action with
 [`zns-verify`](https://github.com/zcashme/zns-verify) (not mint's decoder):
 trial-decrypt under the Registry FVK, recipient is Registry j=0, memo
@@ -36,8 +45,10 @@ On the same chain after alice:
 - **Unhappy memos** (`src/non_request.rs`): three more Treasury payments
   must log `non-request payment` and not register — garbage memo,
   `ZNS:claim:alice:<ua>` (no term), and `Alice` (invalid name).
-- **User spend** (`src/bad_spend.rs`): `add_zns_spend` with the *user* FVK
-  and the `zns-verify` `(ψ, rcm)` opening must fail `FvkMismatch`
+- **User spend** (`src/bad_spend.rs`): `add_zns_spend` with a pinned
+  non-Registry FVK (not the wallet's key — provisioning Zallet from a
+  chosen phrase needs a terminal prompt that CI lacks) and the
+  `zns-verify` `(ψ, rcm)` opening must fail `FvkMismatch`
   (recipient is Registry). Then `zns-verify` still finds the same claim.
 
 It does **not** check the following.
@@ -48,9 +59,9 @@ It does **not** check the following.
 - **Vault sweep.** After boot, Treasury may try to move excess to the
   P2PKH vault. The test continues if that proposal fails. Claim fees are
   paid from the ceremony Treasury note, not from a successful sweep.
-- **Claim price.** The user overpays (whole coinbase minus ZIP-317). The
-  test does not check that the payment equals mint's oracle-priced
-  forever-claim fee, or that an underpay is rejected.
+- **Claim price.** The user pays a fixed 2.0 ZEC. The test does not check
+  that the payment equals mint's oracle-priced forever-claim fee, or that
+  an underpay is rejected.
 - **Payment ↔ Name Note binding.** It records the Treasury *payment*
   txid only to catch `non-request payment` on that tx. The on-chain
   check is the *registration* tx (Name Note to Registry). It does not
@@ -63,10 +74,11 @@ It does **not** check the following.
   not mint's inbound parser. Nothing queries a lightwalletd/resolver for
   `alice`.
 
-Skips locally if `zebrad` is missing; CI requires `$ZEBRAD_BIN`.
-CI downloads Sapling params into `$ZCASH_PARAMS_DIR`. Locally, put
-`sapling-spend.params` and `sapling-output.params` in `~/.zcash-params`
-(from https://download.z.cash/downloads/).
+Skips locally if `zebrad` or `zallet-zebra` is missing; CI requires
+`$ZEBRAD_BIN` and builds zallet itself. CI downloads Sapling params into
+`$ZCASH_PARAMS_DIR`. Locally, put `sapling-spend.params` and
+`sapling-output.params` in `~/.zcash-params` (from
+https://download.z.cash/downloads/).
 
 ## License
 

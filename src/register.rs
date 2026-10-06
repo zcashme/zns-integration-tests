@@ -5,7 +5,6 @@ use std::time::{Duration, Instant};
 
 use anyhow::{bail, Result};
 
-use crate::claim::pay_claim;
 use crate::harness::Stack;
 use crate::verify::{
     registration_txid, registry_commitment_keys, wait_for_verified_name_note, VerifiedNameNote,
@@ -17,7 +16,7 @@ use crate::verify::{
 /// `zns-verify` decrypt + `cmx`; fields alice/claim/user UA/`none`/0/FakeTee keys;
 /// mint `txid=` matches the on-chain registration tx if present.
 pub async fn claim_alice(stack: &mut Stack) -> Result<VerifiedNameNote> {
-    let claim_txid = pay_claim(&mut stack.zebra, &stack.user, "alice").await?;
+    let claim_txid = stack.user.pay_claim("alice").await?;
     eprintln!("claim payment txid {claim_txid}");
     // Confirm the payment, then leave the tip still so mint's
     // `exact_tip == cursor` gate can run intake (a racing tip skips it).
