@@ -26,6 +26,8 @@ use zcash_protocol::consensus::BlockHeight;
 use zcash_protocol::local_consensus::LocalNetwork;
 use zcash_protocol::value::{ZatBalance, Zatoshis};
 use zip32::AccountId;
+// The dev seed: canon owns the regtest key contract.
+pub(crate) use zns_canon::regtest::DEV_SEED;
 
 use crate::tx::assemble_v6_transparent_ironwood;
 use crate::zebra::{Zebrad, NU6_3_ACTIVATION_HEIGHT};
@@ -41,8 +43,6 @@ pub const COINBASE_MATURITY: u32 = 100;
 
 /// Blocks to mine so NU6.3 is active and at least one coinbase is mature.
 pub const FIXTURE_HEIGHT: u32 = NU6_3_ACTIVATION_HEIGHT + COINBASE_MATURITY;
-
-pub(crate) const DEV_SEED: [u8; 32] = [0u8; 32];
 
 /// Same LocalNetwork as mint `boot.rs` `regtest_network()`.
 pub fn regtest_network() -> LocalNetwork {

@@ -1,6 +1,6 @@
 //! Spawn `zns-mint` built with `--features regtest`.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -41,19 +41,22 @@ impl Mint {
         )
     }
 
-    pub async fn start(bin: PathBuf) -> Result<Self> {
+    /// `birthday` is the ceremony anchor's confirmation height (the tip
+    /// `publish` left the chain at); it lands in `zns_mint.conf` and boot
+    /// cross-checks it against the chain.
+    pub async fn start(bin: PathBuf, birthday: u32) -> Result<Self> {
         let dir = tempfile::tempdir().context("create mint dir")?;
         let keys = dir.path().join("keys");
-        std::fs::create_dir(&keys).context("create mint keys/")?;
+        // The dev keys/ contract, one writer: the sealed capsule plus the
+        // conf boot reads on every network.
+        zns_canon::regtest::write_dev_keys(&keys, birthday).context("write dev keys/")?;
         let dest = keys.join("zns_seed.capsule");
+        // An explicit capsule (ZNS_SEED_CAPSULE, or the sibling checkout's
+        // keys/) overrides the generated one. Every dev capsule seals the
+        // same all-zero seed, so the written conf still matches.
         if let Some(capsule) = capsule_source() {
             std::fs::copy(&capsule, &dest)
                 .with_context(|| format!("copy capsule from {}", capsule.display()))?;
-        } else {
-            write_dev_capsule(&dest)?;
-        }
-        if !dest.is_file() {
-            bail!("mint working dir has no {}", dest.display());
         }
 
         let log = dir.path().join("mint.stderr");
@@ -117,19 +120,6 @@ impl Mint {
             tokio::time::sleep(Duration::from_millis(500)).await;
         }
     }
-}
-
-/// Seal the all-zero test seed with the public test key.
-fn write_dev_capsule(dest: &Path) -> Result<()> {
-    let key = zns_canon::sealing::dev_sealing_key(zns_canon::capsule::CAPSULE_KEY_CONTEXT);
-    let capsule = zns_canon::capsule::seal_seed(
-        &key,
-        &secrecy::Secret::new([0u8; zns_canon::capsule::SEED_LEN]),
-        &mut rand::rngs::OsRng,
-    )
-    .context("seal dev capsule")?;
-    let bytes = zns_canon::capsule::serialize_capsule(&capsule).context("serialize dev capsule")?;
-    std::fs::write(dest, bytes).with_context(|| format!("write {}", dest.display()))
 }
 
 fn capsule_source() -> Option<PathBuf> {
