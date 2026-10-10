@@ -12,7 +12,7 @@ use crate::binaries::zebrad_bin;
 use crate::child::ChildProcess;
 use crate::rpc::json_rpc;
 
-/// Matches `zns-mint` `MINT_BIRTHDAY` on `--features regtest` (first block after NU6.3).
+/// NU6.3 activation height; boot's regtest birthday is always past it.
 pub const NU6_3_ACTIVATION_HEIGHT: u32 = 4;
 
 /// Mint hardcodes these (mainnet/regtest): JSON-RPC 8232, indexer gRPC 8230.
@@ -286,7 +286,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn config_pins_nu63_at_mint_birthday() {
+    fn config_pins_nu63_activation() {
         let toml = zebrad_toml(1, 8232, 8230, DEFAULT_MINER_ADDRESS, "/tmp/z");
         assert!(toml.contains("\"NU6.3\" = 4"), "{toml}");
         assert!(toml.contains("listen_addr = \"127.0.0.1:8232\""));
