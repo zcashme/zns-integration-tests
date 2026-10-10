@@ -41,20 +41,22 @@ impl Mint {
         )
     }
 
-    /// `birthday` is the ceremony anchor's confirmation height (the tip
-    /// `publish` left the chain at); it lands in `zns_mint.conf` and boot
-    /// cross-checks it against the chain.
+    /// `birthday` is the ceremony tip; it lands in `zns_mint.conf`.
     pub async fn start(bin: PathBuf, birthday: u32) -> Result<Self> {
         let dir = tempfile::tempdir().context("create mint dir")?;
         let keys = dir.path().join("keys");
-        // The dev keys/ contract, one writer: the sealed capsule plus the
-        // conf boot reads on every network.
+        // The dev keys/ contract, one writer.
         zns_canon::regtest::write_dev_keys(&keys, birthday).context("write dev keys/")?;
         let dest = keys.join("zns_seed.capsule");
-        // An explicit capsule (ZNS_SEED_CAPSULE, or the sibling checkout's
-        // keys/) overrides the generated one. Every dev capsule seals the
-        // same all-zero seed, so the written conf still matches.
+        // An explicit capsule overrides the generated one; it must seal the dev seed.
         if let Some(capsule) = capsule_source() {
+            let blob = zns_canon::capsule::read_capsule_file(&capsule)
+                .with_context(|| format!("read capsule {}", capsule.display()))?;
+            let sealed = zns_canon::capsule::parse_capsule(&blob)
+                .with_context(|| format!("parse capsule {}", capsule.display()))?;
+            if sealed.fingerprint != zns_canon::regtest::dev_seed_fingerprint().to_bytes() {
+                bail!("override capsule does not seal the dev seed");
+            }
             std::fs::copy(&capsule, &dest)
                 .with_context(|| format!("copy capsule from {}", capsule.display()))?;
         }

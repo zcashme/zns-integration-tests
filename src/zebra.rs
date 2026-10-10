@@ -12,9 +12,7 @@ use crate::binaries::zebrad_bin;
 use crate::child::ChildProcess;
 use crate::rpc::json_rpc;
 
-/// NU6.3 activation height. Active for the fixture's whole life; boot's
-/// regtest birthday (the ceremony tip, written into `zns_mint.conf`) is
-/// always past it.
+/// NU6.3 activation height; boot's regtest birthday is always past it.
 pub const NU6_3_ACTIVATION_HEIGHT: u32 = 4;
 
 /// Mint hardcodes these (mainnet/regtest): JSON-RPC 8232, indexer gRPC 8230.

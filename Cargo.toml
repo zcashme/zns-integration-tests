@@ -31,8 +31,7 @@ zip32 = "0.2.1"
 # patch below). Ceremony/claim still need orchard for proving.
 zns-verify = { git = "https://github.com/zcashme/zns-verify.git", tag = "v0.1.1", features = ["decrypt"] }
 # Public key for sealing the all-zero test capsule. A release build cannot use this.
-# Stacked on zns-canon#11 (`regtest::write_dev_keys`); retrace to main once it merges.
-zns-canon = { git = "https://github.com/zcashme/zns-canon.git", branch = "dev/dev-keys-writer", features = ["non-tee"] }
+zns-canon = { git = "https://github.com/zcashme/zns-canon.git", branch = "main", features = ["non-tee"] }
 
 [patch.crates-io]
 orchard = { git = "https://github.com/zcashme/orchard.git", tag = "zns-orchard-v0.15.5.2" }
