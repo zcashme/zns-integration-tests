@@ -105,7 +105,7 @@ pub async fn mature_coinbase_zats(zebra: &Zebrad, address: &str) -> Result<u64> 
 
 /// Mine-mature coinbase, then one Ironwood shielding tx: 40 zero-value
 /// Registry outputs + a Treasury note covering the remainder after ZIP-317.
-pub async fn publish(zebra: &mut Zebrad) -> Result<()> {
+pub async fn publish(zebra: &mut Zebrad) -> Result<String> {
     let network = regtest_network();
     let (taddr, child) = taddr_for_seed(&network, &DEV_SEED)?;
     let treasury_usk = account_usk(&network, &DEV_SEED, 0)?;
@@ -125,8 +125,8 @@ pub async fn publish(zebra: &mut Zebrad) -> Result<()> {
         );
     }
 
-    if try_cached_tx(zebra).await? {
-        return Ok(());
+    if let Some(txid) = try_cached_tx(zebra).await? {
+        return Ok(txid);
     }
 
     let sk = treasury_usk
@@ -164,8 +164,9 @@ pub async fn publish(zebra: &mut Zebrad) -> Result<()> {
         .await
         .context("sendrawtransaction ceremony")?;
     zebra.generate_blocks(1).await?;
+    let txid = tx.txid().to_string();
     save_cached_tx(&hex);
-    Ok(())
+    Ok(txid)
 }
 
 /// Broadcast the ceremony tx cached at `ZNS_CEREMONY_TX_CACHE`, if any.
@@ -177,22 +178,22 @@ pub async fn publish(zebra: &mut Zebrad) -> Result<()> {
 /// proofs do not need to be reproduced. Broadcast-first with a proving
 /// fallback: a missing, stale, or rejected cache only costs time, never
 /// correctness.
-async fn try_cached_tx(zebra: &mut Zebrad) -> Result<bool> {
+async fn try_cached_tx(zebra: &mut Zebrad) -> Result<Option<String>> {
     let Some(path) = std::env::var_os("ZNS_CEREMONY_TX_CACHE") else {
-        return Ok(false);
+        return Ok(None);
     };
     let display = || Path::new(&path).display();
     let cached = match std::fs::read_to_string(&path) {
         Ok(s) => s,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(e) => {
             eprintln!("ceremony: cannot read {}: {e}; re-proving", display());
-            return Ok(false);
+            return Ok(None);
         }
     };
     let Some(hex) = cached.lines().find(|l| !l.trim().is_empty()) else {
         eprintln!("ceremony: cache file empty; re-proving");
-        return Ok(false);
+        return Ok(None);
     };
     let hex = hex.trim();
     zebra.ensure_rpc().await?;
@@ -201,14 +202,14 @@ async fn try_cached_tx(zebra: &mut Zebrad) -> Result<bool> {
         .await
     {
         Ok(v) => {
-            let txid = v.as_str().unwrap_or("?");
+            let txid = v.as_str().unwrap_or("?").to_string();
             eprintln!("ceremony: broadcast cached {txid}");
             zebra.generate_blocks(1).await?;
-            Ok(true)
+            Ok(Some(txid))
         }
         Err(e) => {
             eprintln!("ceremony: cached tx rejected ({e}); re-proving");
-            Ok(false)
+            Ok(None)
         }
     }
 }
