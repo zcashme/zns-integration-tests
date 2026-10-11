@@ -50,3 +50,6 @@ opt-level = 3
 opt-level = 3
 [profile.test.package.halo2_gadgets]
 opt-level = 3
+
+[dev-dependencies]
+toml = "0.8"

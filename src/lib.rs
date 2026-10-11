@@ -13,11 +13,15 @@ mod resolver;
 mod rpc;
 mod tx;
 mod verify;
-mod zallet;
-mod zebra;
+pub mod zallet;
+pub mod zebra;
+
+pub use zallet::Zallet;
+pub use zebra::Zebrad;
 
 pub use bad_spend::user_cannot_spend_alice;
 pub use binaries::zebrad_bin;
+pub use binaries::zallet_bin;
 pub use ceremony::{miner_address, publish, treasury_ua, FIXTURE_HEIGHT};
 pub use claim::User;
 pub use harness::Stack;
@@ -29,4 +33,3 @@ pub use verify::{
     registration_txid, registry_commitment_keys, wait_for_verified_name_note, VerifiedNameNote,
     VECTOR_G_D, VECTOR_PK_D,
 };
-pub use zebra::Zebrad;
