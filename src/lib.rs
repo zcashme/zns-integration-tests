@@ -17,8 +17,9 @@ mod zallet;
 mod zebra;
 
 pub use bad_spend::user_cannot_spend_alice;
+pub use binaries::zallet_bin;
 pub use binaries::zebrad_bin;
-pub use ceremony::{miner_address, publish, treasury_ua, FIXTURE_HEIGHT};
+pub use ceremony::{miner_address, publish, regtest_network, treasury_ua, FIXTURE_HEIGHT};
 pub use claim::User;
 pub use harness::Stack;
 pub use mint::Mint;
@@ -29,4 +30,5 @@ pub use verify::{
     registration_txid, registry_commitment_keys, wait_for_verified_name_note, VerifiedNameNote,
     VECTOR_G_D, VECTOR_PK_D,
 };
+pub use zallet::Zallet;
 pub use zebra::Zebrad;
