@@ -20,8 +20,8 @@ pub use zallet::Zallet;
 pub use zebra::Zebrad;
 
 pub use bad_spend::user_cannot_spend_alice;
-pub use binaries::zebrad_bin;
 pub use binaries::zallet_bin;
+pub use binaries::zebrad_bin;
 pub use ceremony::{miner_address, publish, treasury_ua, FIXTURE_HEIGHT};
 pub use claim::User;
 pub use harness::Stack;

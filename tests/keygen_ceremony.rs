@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 use anyhow::{bail, Context, Result};
 use serde_json::json;
 
-use zns_integration_tests::{Zebrad, Zallet};
+use zns_integration_tests::{Zallet, Zebrad};
 
 /// Coinbase maturity on this chain plus the NU6 family activation height.
 const MATURE_BLOCKS: u32 = 104;
@@ -29,7 +29,7 @@ fn skip_or_bail(why: &str) -> Result<()> {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn keygen_ceremony_runs_straight_through() -> Result<()> {
-    use zns_integration_tests::{zebrad_bin, zallet_bin};
+    use zns_integration_tests::{zallet_bin, zebrad_bin};
 
     if zebrad_bin().is_none() {
         return skip_or_bail("zebrad not found (set ZEBRAD_BIN)");
@@ -39,7 +39,9 @@ async fn keygen_ceremony_runs_straight_through() -> Result<()> {
     }
     let keygen_bin = match std::env::var_os("ZNS_KEYGEN_BIN") {
         Some(bin) => std::path::PathBuf::from(bin),
-        None => return skip_or_bail("set ZNS_KEYGEN_BIN to a zns-keygen built with --features regtest"),
+        None => {
+            return skip_or_bail("set ZNS_KEYGEN_BIN to a zns-keygen built with --features regtest")
+        }
     };
     if !keygen_bin.is_file() {
         bail!("ZNS_KEYGEN_BIN {} is not a file", keygen_bin.display());
@@ -61,7 +63,9 @@ async fn keygen_ceremony_runs_straight_through() -> Result<()> {
     zallet.shield_coinbase().await?;
     zebra.generate_blocks(1).await?; // confirm the shield tx
     let tip = zebra.tip_height().await?;
-    zallet.wait_until_synced(tip, Duration::from_secs(120)).await?;
+    zallet
+        .wait_until_synced(tip, Duration::from_secs(120))
+        .await?;
     zallet
         .wait_until_shielded(150_000_000, Duration::from_secs(120))
         .await?;
@@ -104,13 +108,19 @@ async fn keygen_ceremony_runs_straight_through() -> Result<()> {
     loop {
         if let Some(status) = child.try_wait()? {
             if !status.success() {
-                bail!("keygen failed: {status}\n---\n{}", std::fs::read_to_string(&log_path)?);
+                bail!(
+                    "keygen failed: {status}\n---\n{}",
+                    std::fs::read_to_string(&log_path)?
+                );
             }
             break;
         }
         if Instant::now() > deadline {
             let _ = child.kill();
-            bail!("keygen did not finish in 1500s\n---\n{}", std::fs::read_to_string(&log_path)?);
+            bail!(
+                "keygen did not finish in 1500s\n---\n{}",
+                std::fs::read_to_string(&log_path)?
+            );
         }
         zebra.generate_blocks(1).await?;
         tokio::time::sleep(Duration::from_secs(3)).await;
@@ -123,9 +133,15 @@ async fn keygen_ceremony_runs_straight_through() -> Result<()> {
         std::fs::read_to_string(keys.join("zns_custody_manifest.toml")).context("manifest")?;
     let manifest: serde_json::Value = toml_to_json(&manifest_text)?;
     assert_eq!(manifest["network"], "regtest");
-    let txid = manifest["anchor_txid"].as_str().expect("anchor_txid").to_string();
+    let txid = manifest["anchor_txid"]
+        .as_str()
+        .expect("anchor_txid")
+        .to_string();
     let birthday = manifest["birthday"].as_u64().expect("birthday") as u32;
-    let fingerprint = manifest["seed_fingerprint"].as_str().expect("fingerprint").to_string();
+    let fingerprint = manifest["seed_fingerprint"]
+        .as_str()
+        .expect("fingerprint")
+        .to_string();
     assert!(txid.len() == 64, "txid hex: {txid}");
     assert!(birthday > 0);
 
@@ -148,7 +164,10 @@ async fn keygen_ceremony_runs_straight_through() -> Result<()> {
     let blockhash = tx["blockhash"].as_str().context("blockhash")?.to_string();
     let block = zebra.rpc("getblock", json!([blockhash, 1])).await?;
     let height = block["height"].as_u64().context("height")?;
-    assert_eq!(height as u32, birthday, "birthday is the anchor's inclusion height");
+    assert_eq!(
+        height as u32, birthday,
+        "birthday is the anchor's inclusion height"
+    );
 
     Ok(())
 }
@@ -158,12 +177,7 @@ async fn wait_for_line(path: &std::path::Path, prefix: &str, timeout_secs: u64) 
     loop {
         if let Ok(text) = std::fs::read_to_string(path) {
             if let Some(line) = text.lines().find(|l| l.contains(prefix)) {
-                return Ok(line
-                    .split(prefix)
-                    .nth(1)
-                    .expect("split")
-                    .trim()
-                    .to_string());
+                return Ok(line.split(prefix).nth(1).expect("split").trim().to_string());
             }
         }
         if Instant::now() > deadline {
