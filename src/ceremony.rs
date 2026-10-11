@@ -9,7 +9,8 @@ use std::path::Path;
 use anyhow::{anyhow, bail, Context, Result};
 use orchard::builder::{Builder as OrchardBuilder, BundleType};
 use orchard::bundle::BundleVersion;
-use rand::rngs::OsRng;
+use rand::rand_core::UnwrapErr;
+use rand::rngs::SysRng;
 use transparent::address::TransparentAddress;
 use transparent::builder::{
     SpendInfo, TransparentBuilder, TransparentInputInfo, TransparentSigningSet,
@@ -59,6 +60,7 @@ pub fn regtest_network() -> LocalNetwork {
         nu6_1: Some(four),
         nu6_2: Some(four),
         nu6_3: Some(four),
+        nu7: None,
     }
 }
 
@@ -262,6 +264,8 @@ pub(crate) fn orchard_ua(network: &LocalNetwork, seed: &[u8; 32]) -> Result<Stri
         Some(fvk.address_at(0u32, orchard::keys::Scope::External)),
         None,
         None,
+        None,
+        None,
     )
     .ok_or_else(|| anyhow!("orchard-only UA"))
     .map(|ua| ua.encode(network))
@@ -432,7 +436,7 @@ fn build_ceremony_tx(
         [0; 512],
     )?;
     let (ironwood, _) = ironwood_builder
-        .build::<ZatBalance>(&mut OsRng)?
+        .build::<ZatBalance>(&mut UnwrapErr(SysRng))?
         .expect("ironwood bundle exists");
 
     // No expiry: a cached ceremony tx must stay replayable at whatever

@@ -4,7 +4,8 @@
 //! sequence so branch, expiry, and proving-key choice stay aligned.
 
 use anyhow::Result;
-use rand::rngs::OsRng;
+use rand::rand_core::UnwrapErr;
+use rand::rngs::SysRng;
 use transparent::builder::{TransparentSigningSet, Unauthorized};
 use transparent::bundle::Bundle as TransparentBundle;
 use zcash_primitives::transaction::builder::cached_orchard_proving_key;
@@ -63,10 +64,10 @@ pub fn assemble_v6_transparent_ironwood<P: Parameters>(
     let ironwood = ironwood
         .create_proof(
             cached_orchard_proving_key(bundle_v.circuit_version()),
-            &mut OsRng,
+            &mut UnwrapErr(SysRng),
         )?
         .prepare(
-            OsRng,
+            UnwrapErr(SysRng),
             *signature_hash(&unauthed, &SignableInput::Shielded, &txid_parts).as_ref(),
         )
         .finalize()?;

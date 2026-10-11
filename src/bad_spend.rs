@@ -66,7 +66,13 @@ pub async fn user_cannot_spend_alice(stack: &mut Stack, claimed: &VerifiedNameNo
                 ironwood_padding: BundlePadding::UNPADDED,
             },
         );
-        builder.add_zns_spend::<zip317::FeeError>(user_fvk, orchard_note, path, trapdoor, psi)
+        builder.add_zns_spend::<zip317::FeeError>(
+            user_fvk,
+            orchard_note,
+            path,
+            trapdoor,
+            orchard::note::Psi::from_inner(psi),
+        )
     };
 
     match err {
