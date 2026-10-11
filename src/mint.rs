@@ -41,8 +41,9 @@ impl Mint {
         )
     }
 
-    /// `birthday` is the ceremony tip; it lands in `zns_mint.conf`.
-    pub async fn start(bin: PathBuf, birthday: u32) -> Result<Self> {
+    /// `birthday` is the ceremony tip and `txid` the anchor it mined;
+    /// both land in the mint's `keys/` contract.
+    pub async fn start(bin: PathBuf, birthday: u32, txid: &str) -> Result<Self> {
         let dir = tempfile::tempdir().context("create mint dir")?;
         let keys = dir.path().join("keys");
         // The dev keys/ contract, one writer.
@@ -60,6 +61,13 @@ impl Mint {
             std::fs::copy(&capsule, &dest)
                 .with_context(|| format!("copy capsule from {}", capsule.display()))?;
         }
+
+        // The custody manifest boot verifies against the chain.
+        std::fs::write(
+            keys.join("zns_custody_manifest.toml"),
+            format!("anchor_txid = \"{txid}\"\nbirthday = {birthday}\n"),
+        )
+        .context("write custody manifest")?;
 
         let log = dir.path().join("mint.stderr");
         let file = std::fs::File::create(&log).context("create mint.stderr")?;

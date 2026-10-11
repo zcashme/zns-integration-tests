@@ -50,11 +50,11 @@ impl Stack {
         let user = User::fund(&mut zebra, mature_user_coins).await?;
         eprintln!("user miner: {}", user.miner_address);
         eprintln!("user UA: {}", user.ua);
-        publish(&mut zebra).await?;
+        let ceremony_txid = publish(&mut zebra).await?;
         let ceremony_tip = zebra.tip_height().await?;
 
         let mint_bin = mint_build.await.expect("mint build task")?;
-        let mut mint = Mint::start(mint_bin, ceremony_tip).await?;
+        let mut mint = Mint::start(mint_bin, ceremony_tip, &ceremony_txid).await?;
         mint.wait_until_live().await?;
         wait_for_first_run_loop(&mut zebra, &mut mint).await?;
 
