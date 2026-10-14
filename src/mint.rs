@@ -46,8 +46,8 @@ impl Mint {
     pub async fn start(bin: PathBuf, birthday: u32, txid: &str) -> Result<Self> {
         let dir = tempfile::tempdir().context("create mint dir")?;
         let keys = dir.path().join("keys");
-        // The dev keys/ contract, one writer.
-        zns_canon::regtest::write_dev_keys(&keys, birthday).context("write dev keys/")?;
+        // The dev keys/ contract, one writer: capsule + custody manifest.
+        zns_canon::regtest::write_dev_keys(&keys, birthday, txid).context("write dev keys/")?;
         let dest = keys.join("zns_seed.capsule");
         // An explicit capsule overrides the generated one; it must seal the dev seed.
         if let Some(capsule) = capsule_source() {
@@ -61,13 +61,6 @@ impl Mint {
             std::fs::copy(&capsule, &dest)
                 .with_context(|| format!("copy capsule from {}", capsule.display()))?;
         }
-
-        // The custody manifest boot verifies against the chain.
-        std::fs::write(
-            keys.join("zns_custody_manifest.toml"),
-            format!("anchor_txid = \"{txid}\"\nbirthday = {birthday}\n"),
-        )
-        .context("write custody manifest")?;
 
         let log = dir.path().join("mint.stderr");
         let file = std::fs::File::create(&log).context("create mint.stderr")?;
