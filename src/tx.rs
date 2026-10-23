@@ -10,8 +10,7 @@ use transparent::builder::{TransparentSigningSet, Unauthorized};
 use transparent::bundle::Bundle as TransparentBundle;
 use zcash_primitives::transaction::builder::cached_orchard_proving_key;
 use zcash_primitives::transaction::components::orchard::bundle_version_for_branch;
-use zcash_primitives::transaction::sighash::{signature_hash, SignableInput};
-use zcash_primitives::transaction::txid::TxIdDigester;
+use zcash_primitives::transaction::sighash::{PrecomputedSighashData, SignableInput};
 use zcash_primitives::transaction::{self, Transaction, TransactionData};
 use zcash_protocol::consensus::{BlockHeight, BranchId, Parameters};
 use zcash_protocol::value::ZatBalance;
@@ -24,7 +23,7 @@ type UnprovenIronwood = orchard::Bundle<
 /// Sign the transparent inputs, prove+sign the Ironwood bundle, freeze a v6 tx.
 ///
 /// `transparent` and `ironwood` must already be built (unsigned). Sapling is
-/// always `None`. Pass `target + DEFAULT_TX_EXPIRY_DELTA` for normal txs, or
+/// always `None`. Pass `target + default_tx_expiry_delta(branch)` for normal txs, or
 /// `BlockHeight::from(0)` when the tx must stay replayable (ceremony cache).
 pub fn assemble_v6_transparent_ironwood<P: Parameters>(
     network: &P,
@@ -45,13 +44,15 @@ pub fn assemble_v6_transparent_ironwood<P: Parameters>(
         None,
         Some(ironwood.clone()),
     );
-    let txid_parts = unauthed.digest(TxIdDigester);
+    let sighash = PrecomputedSighashData::new_zip244(unauthed)
+        .unwrap_or_else(|_| unreachable!("v6 signs under ZIP 244"));
 
     let transparent = transparent
         .map(|b| {
             b.apply_signatures(
                 |index| {
-                    *signature_hash(&unauthed, &SignableInput::Transparent(index), &txid_parts)
+                    *sighash
+                        .signature_hash(&SignableInput::Transparent(index))
                         .as_ref()
                 },
                 signing,
@@ -68,7 +69,7 @@ pub fn assemble_v6_transparent_ironwood<P: Parameters>(
         )?
         .prepare(
             UnwrapErr(SysRng),
-            *signature_hash(&unauthed, &SignableInput::Shielded, &txid_parts).as_ref(),
+            *sighash.signature_hash(&SignableInput::Shielded).as_ref(),
         )
         .finalize()?;
 
