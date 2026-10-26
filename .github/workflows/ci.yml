@@ -1,4 +1,5 @@
-# Lint and unit-test this crate on pull requests, on main, and once a day.
+# Lint and unit-test this crate on pull requests and on main. Once a day,
+# and on a manual run, also build mint and the resolver from their master tips.
 name: CI
 
 on:
@@ -43,8 +44,54 @@ jobs:
       - name: rustfmt
         run: cargo fmt --check
 
+      # A scheduled or manual run resolves zns-canon to the tip of main.
+      # The lockfile in the repository stays put.
+      - name: Use the tip of zns-canon main
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        run: cargo update -p zns-canon
+
       - name: clippy
         run: cargo clippy --all-targets -- -D warnings
 
       - name: test (lib)
         run: cargo test --lib
+
+  # Checkout ref is the branch tip at the start of the run.
+  stack:
+    name: stack
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: zvs
+    timeout-minutes: 90
+    steps:
+      - name: Checkout zns-mint
+        uses: actions/checkout@v4
+        with:
+          repository: zcashme/zns-mint
+          ref: master
+          path: zns-mint
+
+      - name: Checkout zns-resolver
+        uses: actions/checkout@v4
+        with:
+          repository: zcashme/zns-resolver
+          ref: master
+          path: zns-resolver
+
+      - name: Install protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build zns-mint
+        working-directory: zns-mint
+        run: |
+          cargo \
+            --config profile.dev.package.orchard.opt-level=3 \
+            --config profile.dev.package.halo2_proofs.opt-level=3 \
+            --config profile.dev.package.halo2_gadgets.opt-level=3 \
+            build --locked --bin zns-mint --features regtest
+
+      - name: Build zns-resolver
+        working-directory: zns-resolver
+        run: cargo build --locked --bin zns-resolver --no-default-features --features testnet
