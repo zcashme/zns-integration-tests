@@ -1,9 +1,13 @@
 //! Live reorg of the mint queues. Needs `zebrad`, `zallet-zebra`, and a
 //! sibling `zns-mint`. Skips when either binary is missing.
 //!
+//! Run it with:
+//!
 //! ```sh
 //! cargo test --test reorg -- --nocapture
 //! ```
+//!
+//! The 06:00 UTC CI schedule runs that same command.
 
 use zns_integration_tests::Stack;
 
