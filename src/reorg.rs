@@ -56,7 +56,7 @@ pub async fn run(stack: &mut Stack) -> Result<()> {
 /// Invalidate an empty tip and mine a replacement. No queue is holding work.
 async fn smoke(stack: &mut Stack) -> Result<()> {
     let tip = stack.zebra.tip_height().await?;
-    wait_scanned(stack, tip).await?;
+    wait_scanned(stack, tip, 0).await?;
     let old_hash = stack.zebra.block_hash(tip).await?;
     let mark = stack.mint.log_text().len();
     stack.zebra.invalidate_above(tip - 1).await?;
@@ -72,7 +72,7 @@ async fn smoke(stack: &mut Stack) -> Result<()> {
     if new_hash == old_hash {
         bail!("replacement block at {tip} reused {old_hash}");
     }
-    wait_scanned(stack, tip).await?;
+    wait_scanned(stack, tip, mark).await?;
     eprintln!(
         "smoke: rewound to {} and replaced {old_hash} with {new_hash}",
         tip - 1
@@ -101,7 +101,7 @@ async fn refunds(stack: &mut Stack) -> Result<()> {
     wait_rewind(stack, mark).await?;
     stack.zebra.generate_blocks(1).await?;
     let tip = stack.zebra.tip_height().await?;
-    wait_scanned(stack, tip).await?;
+    wait_scanned(stack, tip, mark).await?;
     if refund_built(tail(&stack.mint.log_text(), mark), &txid) {
         bail!("orphaned payment {txid} was refunded");
     }
@@ -153,7 +153,7 @@ async fn reorg_confirmation(
     note: VerifiedNameNote,
 ) -> Result<VerifiedNameNote> {
     let tip = stack.zebra.tip_height().await?;
-    wait_scanned(stack, tip).await?;
+    wait_scanned(stack, tip, 0).await?;
     let payment_height = stack
         .zebra
         .find_tx_height(payment, 1)
@@ -226,7 +226,7 @@ async fn orphan_payment(
     keep: &VerifiedNameNote,
 ) -> Result<()> {
     let tip = stack.zebra.tip_height().await?;
-    wait_scanned(stack, tip).await?;
+    wait_scanned(stack, tip, 0).await?;
     let payment_height = stack
         .zebra
         .find_tx_height(payment, keep.height)
@@ -279,10 +279,10 @@ async fn otp_wipe(stack: &mut Stack, name: &str) -> Result<()> {
     let code = read_otp(stack, &challenge).await?;
 
     let stable = stack.zebra.tip_height().await?;
-    wait_scanned(stack, stable).await?;
+    wait_scanned(stack, stable, 0).await?;
     stack.zebra.generate_blocks(1).await?;
     let empty = stack.zebra.tip_height().await?;
-    wait_scanned(stack, empty).await?;
+    wait_scanned(stack, empty, 0).await?;
     let pay_height = stack
         .zebra
         .find_tx_height(&pay, 1)
@@ -484,9 +484,12 @@ async fn wait_rewind(stack: &mut Stack, mark: usize) -> Result<u32> {
     rewind_height(tail(&stack.mint.log_text(), mark)).context("rewind line lost")
 }
 
-async fn wait_scanned(stack: &mut Stack, height: u32) -> Result<()> {
+/// Wait until `scanned to tip` reaches `height` in the log after `since`.
+/// A replacement block reuses the old height, so post-rewind waits pass
+/// the mark taken before `invalidate_above`.
+async fn wait_scanned(stack: &mut Stack, height: u32, since: usize) -> Result<()> {
     wait_for(stack, SCAN_TIMEOUT, "scan", false, |log| {
-        last_height(log, "scanned to tip").is_some_and(|scanned| scanned >= height)
+        last_height(tail(log, since), "scanned to tip").is_some_and(|scanned| scanned >= height)
     })
     .await
 }
@@ -676,6 +679,11 @@ INFO NameNote order sent txid=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 INFO refund built txid=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc payment=dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\n";
         assert_eq!(rewind_height(log), Some(214));
         assert_eq!(last_height(log, "scanned to tip"), Some(220));
+        let stale = "\
+INFO scanned to tip height=220\n\
+INFO mint rewound to canonical ancestor height=219\n";
+        let mark = stale.find("mint rewound").expect("rewind line");
+        assert_eq!(last_height(tail(stale, mark), "scanned to tip"), None);
         assert_eq!(
             challenge_txid(log, "zcash").as_deref(),
             Some("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
