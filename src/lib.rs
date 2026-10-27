@@ -9,6 +9,7 @@ mod harness;
 mod mint;
 mod non_request;
 mod register;
+mod reorg;
 mod resolver;
 mod rpc;
 mod tx;
@@ -25,6 +26,7 @@ pub use harness::Stack;
 pub use mint::Mint;
 pub use non_request::pay_invalid_memos;
 pub use register::claim_alice;
+pub use reorg::run as reorg_queues;
 pub use resolver::Resolver;
 pub use verify::{
     registration_txid, registry_commitment_keys, wait_for_verified_name_note, VerifiedNameNote,

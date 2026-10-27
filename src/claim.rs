@@ -90,6 +90,11 @@ impl User {
 
     /// Spend shielded funds to the Treasury with `memo_text`; returns the txid.
     pub async fn pay_treasury(&self, memo_text: &str) -> Result<String> {
+        self.pay_treasury_amount(memo_text, CLAIM_PAYMENT_ZEC).await
+    }
+
+    /// Send `zec` ZEC to the Treasury with `memo_text`. Returns the txid.
+    pub async fn pay_treasury_amount(&self, memo_text: &str, zec: f64) -> Result<String> {
         // Belt-and-braces: refuse to spend while the wallet reports itself
         // locked (only ever true around daemon start; a mid-run block does
         // not flip it, but the wait is free).
@@ -98,7 +103,7 @@ impl User {
         let recipients = json!([
             {
                 "address": treasury_ua()?,
-                "amount": CLAIM_PAYMENT_ZEC,
+                "amount": zec,
                 "memo": memo_hex,
             }
         ]);

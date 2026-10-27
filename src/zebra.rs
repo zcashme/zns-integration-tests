@@ -182,6 +182,77 @@ impl Zebrad {
         self.wait_until_rpc_up().await
     }
 
+    /// Canonical block hash at `height` (`getblockhash`).
+    pub async fn block_hash(&self, height: u32) -> Result<String> {
+        let hash = self
+            .rpc("getblockhash", json!([height]))
+            .await
+            .with_context(|| format!("getblockhash {height}"))?;
+        hash.as_str()
+            .map(str::to_string)
+            .ok_or_else(|| anyhow!("getblockhash {height} was not a string: {hash}"))
+    }
+
+    /// Transaction ids in the block at `height`.
+    pub async fn block_txids(&self, height: u32) -> Result<Vec<String>> {
+        let block = self
+            .rpc("getblock", json!([height.to_string(), 1]))
+            .await
+            .with_context(|| format!("getblock {height}"))?;
+        let txs = block
+            .get("tx")
+            .and_then(|t| t.as_array())
+            .ok_or_else(|| anyhow!("getblock {height} has no tx list: {block}"))?;
+        txs.iter()
+            .map(|tx| {
+                tx.as_str()
+                    .map(str::to_string)
+                    .ok_or_else(|| anyhow!("getblock {height} tx was not a string"))
+            })
+            .collect()
+    }
+
+    /// Height of `txid` on the best chain in `[from, tip]`, if it is still there.
+    pub async fn find_tx_height(&self, txid: &str, from: u32) -> Result<Option<u32>> {
+        let tip = self.tip_height().await?;
+        if from > tip {
+            return Ok(None);
+        }
+        for height in (from..=tip).rev() {
+            if self.block_txids(height).await?.iter().any(|tx| tx == txid) {
+                return Ok(Some(height));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Drop the block above `ancestor` and every descendant.
+    ///
+    /// The best chain shortens to `ancestor`. The mint treats that as a
+    /// reorg. `ancestor` has to sit inside Zebra's non-finalized window
+    /// and at or above the mint birthday; a deeper invalidate fails closed.
+    pub async fn invalidate_above(&self, ancestor: u32) -> Result<()> {
+        let tip = self.tip_height().await?;
+        if ancestor >= tip {
+            bail!("ancestor {ancestor} is not below tip {tip}");
+        }
+        let hash = self.block_hash(ancestor + 1).await?;
+        self.rpc("invalidateblock", json!([hash]))
+            .await
+            .with_context(|| format!("invalidateblock {hash} (height {})", ancestor + 1))?;
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            let now = self.tip_height().await?;
+            if now == ancestor {
+                return Ok(());
+            }
+            if Instant::now() >= deadline {
+                bail!("invalidateblock left tip {now}, wanted {ancestor}");
+            }
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+    }
+
     /// Ironwood note-commitment tree root at the current tip.
     pub async fn ironwood_anchor(&self) -> Result<orchard::Anchor> {
         let height = self.tip_height().await?;
