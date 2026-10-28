@@ -80,8 +80,8 @@ async fn smoke(stack: &mut Stack) -> Result<()> {
     Ok(())
 }
 
-/// A refund admitted for the tip payment is dropped with that block, and
-/// the same payment mined on the new chain is refunded once.
+/// A refund admitted for the tip payment is dropped with that block.
+/// The same raw transaction, mined on the new chain, is refunded once.
 async fn refunds(stack: &mut Stack) -> Result<()> {
     let memo = format!("ZNS:claim:forever:{REFUND_NAME}:{}", stack.user.ua);
     let txid = stack.user.pay_treasury_amount(&memo, REFUND_ZEC).await?;
@@ -96,12 +96,14 @@ async fn refunds(stack: &mut Stack) -> Result<()> {
         bail!("refund for {txid} was built while its block was still the tip");
     }
 
+    // Saved while the payment is still in a block. Rebroadcasting it spends
+    // the same note; a second wallet send would have only the orphaned change.
+    let raw = stack.zebra.raw_transaction(&txid).await?;
     let mark = stack.mint.log_text().len();
-    stack.zebra.invalidate_above(height - 1).await?;
+    let ancestor = height - 1;
+    stack.zebra.invalidate_above(ancestor).await?;
     wait_rewind(stack, mark).await?;
-    stack.zebra.generate_blocks(1).await?;
-    let tip = stack.zebra.tip_height().await?;
-    wait_scanned(stack, tip, mark).await?;
+    wait_scanned(stack, ancestor, mark).await?;
     if refund_built(tail(&stack.mint.log_text(), mark), &txid) {
         bail!("orphaned payment {txid} was refunded");
     }
@@ -109,23 +111,57 @@ async fn refunds(stack: &mut Stack) -> Result<()> {
         bail!("orphaned payment {txid} is still on the best chain");
     }
 
-    let again = stack.user.pay_treasury_amount(&memo, REFUND_ZEC).await?;
-    eprintln!("refund replay {again}");
+    stack.zebra.submit_raw(&raw).await?;
     stack.zebra.generate_blocks(1).await?;
+    let replayed = wait_tx_height(stack, &txid).await?;
+    if replayed <= ancestor {
+        bail!("rebroadcast {txid} mined at {replayed}, not above {ancestor}");
+    }
+    eprintln!("refund rebroadcast {txid} at {replayed}");
     wait_for(stack, DECIDE_TIMEOUT, "refund replay admit", false, |log| {
-        tail(log, mark).contains("payment refund") && tail(log, mark).contains(&again)
+        tail(log, mark).contains("payment refund") && tail(log, mark).contains(&txid)
     })
     .await?;
-    // Due on the pass after the payment's block.
+    // Built on the pass after the payment's block, then left in the mempool
+    // for the block after that.
     stack.zebra.generate_blocks(1).await?;
     wait_for(stack, DECIDE_TIMEOUT, "refund replay built", false, |log| {
-        refund_built(tail(log, mark), &again)
+        !refund_txids(tail(log, mark), &txid).is_empty()
     })
     .await?;
-    if refund_built(tail(&stack.mint.log_text(), mark), &txid) {
-        bail!("the orphaned payment was refunded along with the replay");
+    let built = refund_txids(tail(&stack.mint.log_text(), mark), &txid);
+    if built.len() != 1 {
+        bail!(
+            "refund for {txid} was built {} times: {built:?}",
+            built.len()
+        );
     }
-    eprintln!("refund: orphaned {txid} produced no refund; replay {again} did");
+    let refund_txid = built[0].clone();
+    stack.zebra.generate_blocks(1).await?;
+    let refund_height = wait_tx_height(stack, &refund_txid).await?;
+    let tip = stack.zebra.tip_height().await?;
+    wait_scanned(stack, tip, mark).await?;
+    stack.zebra.generate_blocks(1).await?;
+    let tip = stack.zebra.tip_height().await?;
+    wait_scanned(stack, tip, mark).await?;
+    let built_again = refund_txids(tail(&stack.mint.log_text(), mark), &txid);
+    if built_again != vec![refund_txid.clone()] {
+        bail!("refund for {txid} was built again: {built_again:?}");
+    }
+    if stack
+        .zebra
+        .find_tx_height(&refund_txid, refund_height)
+        .await?
+        != Some(refund_height)
+    {
+        bail!("refund {refund_txid} left height {refund_height}");
+    }
+    stack
+        .user
+        .zallet
+        .wait_until_synced(tip, SCAN_TIMEOUT)
+        .await?;
+    eprintln!("refund: rebroadcast {txid} at {replayed} refunded once as {refund_txid}");
     Ok(())
 }
 
@@ -305,10 +341,17 @@ async fn otp_wipe(stack: &mut Stack, name: &str) -> Result<()> {
     let echo_txid = stack.user.pay_treasury_amount(&echo, REFUND_ZEC).await?;
     eprintln!("stale otp echo {echo_txid}");
     stack.zebra.generate_blocks(1).await?;
+    let echo_height = wait_tx_height(stack, &echo_txid).await?;
     wait_for(stack, DECIDE_TIMEOUT, "stale otp refund", false, |log| {
         tail(log, echo_mark).contains("payment refund") && tail(log, echo_mark).contains(&echo_txid)
     })
     .await?;
+    // `scanned to tip` is logged before a Name Note is submitted. The next
+    // block is scanned only after that submission attempt has finished.
+    wait_scanned(stack, echo_height, echo_mark).await?;
+    stack.zebra.generate_blocks(1).await?;
+    let after = stack.zebra.tip_height().await?;
+    wait_scanned_within(stack, after, echo_mark, SETTLE_TIMEOUT).await?;
     if submitted_txid(tail(&stack.mint.log_text(), echo_mark), name, "update").is_some() {
         bail!("stale OTP authorized an update of {name}");
     }
@@ -488,7 +531,18 @@ async fn wait_rewind(stack: &mut Stack, mark: usize) -> Result<u32> {
 /// A replacement block reuses the old height, so post-rewind waits pass
 /// the mark taken before `invalidate_above`.
 async fn wait_scanned(stack: &mut Stack, height: u32, since: usize) -> Result<()> {
-    wait_for(stack, SCAN_TIMEOUT, "scan", false, |log| {
+    wait_scanned_within(stack, height, since, SCAN_TIMEOUT).await
+}
+
+/// [`wait_scanned`] with an explicit timeout. The stale-OTP check waits
+/// through a Name Note proof that would run if the code still authorized.
+async fn wait_scanned_within(
+    stack: &mut Stack,
+    height: u32,
+    since: usize,
+    timeout: Duration,
+) -> Result<()> {
+    wait_for(stack, timeout, "scan", false, |log| {
         last_height(tail(log, since), "scanned to tip").is_some_and(|scanned| scanned >= height)
     })
     .await
@@ -559,10 +613,19 @@ fn ensure_running(stack: &mut Stack) -> Result<()> {
 }
 
 fn refund_built(log: &str, payment: &str) -> bool {
-    log.lines().any(|line| {
-        let line = strip_ansi(line);
-        line.contains("refund built") && line.contains(payment)
-    })
+    !refund_txids(log, payment).is_empty()
+}
+
+/// Refund transaction ids logged for `payment`, one per `refund built` line.
+fn refund_txids(log: &str, payment: &str) -> Vec<String> {
+    log.lines()
+        .filter_map(|line| {
+            let line = strip_ansi(line);
+            (line.contains("refund built") && line.contains(payment))
+                .then(|| field(&line, "txid"))
+                .flatten()
+        })
+        .collect()
 }
 
 fn submitted_txid(log: &str, name: &str, action: &str) -> Option<String> {
@@ -693,9 +756,10 @@ INFO mint rewound to canonical ancestor height=219\n";
             Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
         );
         assert!(submitted_txid(log, "zcash", "update").is_none());
-        assert!(refund_built(
-            log,
-            "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
-        ));
+        let payment = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
+        let refund = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+        assert_eq!(refund_txids(log, payment), vec![refund.to_string()]);
+        let twice = format!("{log}{log}");
+        assert_eq!(refund_txids(&twice, payment).len(), 2);
     }
 }
