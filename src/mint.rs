@@ -140,6 +140,8 @@ impl Mint {
             .send()
             .await
             .context("scrape mint metrics")?
+            .error_for_status()
+            .context("mint metrics status")?
             .text()
             .await
             .context("read mint metrics")?;

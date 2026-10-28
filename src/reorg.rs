@@ -32,6 +32,8 @@ const REFUND_NAME: &str = "reorgpay";
 
 /// Above the withheld refund fee (10 marginal actions). Not a claim price.
 const REFUND_ZEC: f64 = 0.1;
+/// One claim payment, in zatoshis. Matches `CLAIM_PAYMENT_ZEC`.
+const CLAIM_ZATS: u64 = 200_000_000;
 
 const SCAN_TIMEOUT: Duration = Duration::from_secs(120);
 const DECIDE_TIMEOUT: Duration = Duration::from_secs(180);
@@ -290,6 +292,14 @@ async fn orphan_payment(
         bail!("orphaned {name} note {} is still canonical", note.txid);
     }
     wait_state(stack, name, None, DECIDE_TIMEOUT).await?;
+    // The orphaned payment's change is gone. The wallet has to roll back to
+    // the ancestor and show a spendable note before the reclaim send.
+    stack.user.zallet.wait_until_canonical(SCAN_TIMEOUT).await?;
+    stack
+        .user
+        .zallet
+        .wait_until_shielded(CLAIM_ZATS, SCAN_TIMEOUT)
+        .await?;
     let (_pay, reclaimed) = claim_protected(stack, name).await?;
     if reclaimed.txid == note.txid {
         bail!("reclaimed {name} reused the orphaned note {}", note.txid);
@@ -528,8 +538,7 @@ async fn wait_rewind(stack: &mut Stack, mark: usize) -> Result<u32> {
 }
 
 /// Wait until `scanned to tip` reaches `height` in the log after `since`.
-/// A replacement block reuses the old height, so post-rewind waits pass
-/// the mark taken before `invalidate_above`.
+/// A scan from before the latest rewind in that slice does not count.
 async fn wait_scanned(stack: &mut Stack, height: u32, since: usize) -> Result<()> {
     wait_scanned_within(stack, height, since, SCAN_TIMEOUT).await
 }
@@ -543,7 +552,7 @@ async fn wait_scanned_within(
     timeout: Duration,
 ) -> Result<()> {
     wait_for(stack, timeout, "scan", false, |log| {
-        last_height(tail(log, since), "scanned to tip").is_some_and(|scanned| scanned >= height)
+        scan_height(tail(log, since)).is_some_and(|scanned| scanned >= height)
     })
     .await
 }
@@ -663,13 +672,22 @@ fn rewind_height(log: &str) -> Option<u32> {
     })
 }
 
-fn last_height(log: &str, marker: &str) -> Option<u32> {
-    log.lines().rev().find_map(|line| {
+/// Latest `scanned to tip` height after the last rewind in `log`.
+fn scan_height(log: &str) -> Option<u32> {
+    let mut height = None;
+    for line in log.lines() {
         let line = strip_ansi(line);
-        line.contains(marker)
-            .then(|| field_u32(&line, "height"))
-            .flatten()
-    })
+        if line.contains("mint rewound to canonical ancestor") {
+            height = None;
+            continue;
+        }
+        if line.contains("scanned to tip") {
+            if let Some(h) = field_u32(&line, "height") {
+                height = Some(h);
+            }
+        }
+    }
+    height
 }
 
 fn log_fatal(log: &str) -> bool {
@@ -741,12 +759,13 @@ INFO controller challenged txid=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 INFO NameNote order sent txid=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa name=zcash action=\"claim\"\n\
 INFO refund built txid=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc payment=dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\n";
         assert_eq!(rewind_height(log), Some(214));
-        assert_eq!(last_height(log, "scanned to tip"), Some(220));
+        assert_eq!(scan_height(log), Some(220));
         let stale = "\
 INFO scanned to tip height=220\n\
 INFO mint rewound to canonical ancestor height=219\n";
-        let mark = stale.find("mint rewound").expect("rewind line");
-        assert_eq!(last_height(tail(stale, mark), "scanned to tip"), None);
+        assert_eq!(scan_height(stale), None);
+        let replaced = format!("{stale}INFO scanned to tip height=220\n");
+        assert_eq!(scan_height(&replaced), Some(220));
         assert_eq!(
             challenge_txid(log, "zcash").as_deref(),
             Some("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")

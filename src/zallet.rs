@@ -202,6 +202,47 @@ impl Zallet {
         }
     }
 
+    /// Wait until the wallet tip is the node tip, same height and block hash.
+    ///
+    /// After a reorg the orphaned tip is still taller than the ancestor, so a
+    /// height check reports the wallet as synced while it holds the old chain.
+    /// The wallet stays locked until that recovery finishes.
+    pub async fn wait_until_canonical(&self, timeout: Duration) -> Result<()> {
+        let deadline = Instant::now() + timeout;
+        loop {
+            if let Ok(status) = self.call("getwalletstatus", json!([])).await {
+                let locked = status
+                    .get("locked")
+                    .and_then(|l| l.as_bool())
+                    .unwrap_or(true);
+                let wallet_height = status
+                    .pointer("/wallet_tip/height")
+                    .and_then(|h| h.as_u64());
+                let wallet_hash = status
+                    .pointer("/wallet_tip/blockhash")
+                    .and_then(|h| h.as_str());
+                let node_height = status.pointer("/node_tip/height").and_then(|h| h.as_u64());
+                let node_hash = status
+                    .pointer("/node_tip/blockhash")
+                    .and_then(|h| h.as_str());
+                let fully = status.get("fully_synced_height").and_then(|h| h.as_u64());
+                if !locked
+                    && wallet_height.is_some()
+                    && wallet_height == node_height
+                    && wallet_hash.is_some()
+                    && wallet_hash == node_hash
+                    && fully == wallet_height
+                {
+                    return Ok(());
+                }
+            }
+            if Instant::now() >= deadline {
+                bail!("zallet did not reach the canonical tip within {timeout:?}");
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+
     /// Poll until the wallet's coinbase-spendable view — `z_getbalances`'
     /// per-account `transparent.coinbase.spendable` bucket — reaches
     /// `expected_zats`, the node's total **mature** coinbase to the miner
