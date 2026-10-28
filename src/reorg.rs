@@ -98,8 +98,8 @@ async fn refunds(stack: &mut Stack) -> Result<()> {
         bail!("refund for {txid} was built while its block was still the tip");
     }
 
-    // Saved while the payment is still in a block. Rebroadcasting it spends
-    // the same note; a second wallet send would have only the orphaned change.
+    // Payment hex, read while that transaction is still in a block and
+    // submitted again after the block is invalidated.
     let raw = stack.zebra.raw_transaction(&txid).await?;
     let mark = stack.mint.log_text().len();
     let ancestor = height - 1;
@@ -292,9 +292,15 @@ async fn orphan_payment(
         bail!("orphaned {name} note {} is still canonical", note.txid);
     }
     wait_state(stack, name, None, DECIDE_TIMEOUT).await?;
-    // The orphaned payment's change is gone. The wallet has to roll back to
-    // the ancestor and show a spendable note before the reclaim send.
-    stack.user.zallet.wait_until_canonical(SCAN_TIMEOUT).await?;
+    // The reclaim spends a shielded note. The wallet tip must be Zebra's
+    // current block, with a claim payment spendable.
+    let tip = stack.zebra.tip_height().await?;
+    let hash = stack.zebra.block_hash(tip).await?;
+    stack
+        .user
+        .zallet
+        .wait_until_canonical(tip, &hash, SCAN_TIMEOUT)
+        .await?;
     stack
         .user
         .zallet
@@ -537,14 +543,14 @@ async fn wait_rewind(stack: &mut Stack, mark: usize) -> Result<u32> {
     rewind_height(tail(&stack.mint.log_text(), mark)).context("rewind line lost")
 }
 
-/// Wait until `scanned to tip` reaches `height` in the log after `since`.
-/// A scan from before the latest rewind in that slice does not count.
+/// Wait until a `scanned to tip` line after the latest rewind in the log
+/// past `since` reaches `height`.
 async fn wait_scanned(stack: &mut Stack, height: u32, since: usize) -> Result<()> {
     wait_scanned_within(stack, height, since, SCAN_TIMEOUT).await
 }
 
-/// [`wait_scanned`] with an explicit timeout. The stale-OTP check waits
-/// through a Name Note proof that would run if the code still authorized.
+/// [`wait_scanned`] with an explicit timeout. The stale-OTP follow-up
+/// scan waits through Name Note proving.
 async fn wait_scanned_within(
     stack: &mut Stack,
     height: u32,

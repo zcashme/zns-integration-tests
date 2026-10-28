@@ -202,12 +202,14 @@ impl Zallet {
         }
     }
 
-    /// Wait until the wallet tip is the node tip, same height and block hash.
-    ///
-    /// After a reorg the orphaned tip is still taller than the ancestor, so a
-    /// height check reports the wallet as synced while it holds the old chain.
-    /// The wallet stays locked until that recovery finishes.
-    pub async fn wait_until_canonical(&self, timeout: Duration) -> Result<()> {
+    /// Wait until the wallet is unlocked, fully synced, and its tip is
+    /// `height` with Zebra's `block_hash`.
+    pub async fn wait_until_canonical(
+        &self,
+        height: u32,
+        block_hash: &str,
+        timeout: Duration,
+    ) -> Result<()> {
         let deadline = Instant::now() + timeout;
         loop {
             if let Ok(status) = self.call("getwalletstatus", json!([])).await {
@@ -221,23 +223,19 @@ impl Zallet {
                 let wallet_hash = status
                     .pointer("/wallet_tip/blockhash")
                     .and_then(|h| h.as_str());
-                let node_height = status.pointer("/node_tip/height").and_then(|h| h.as_u64());
-                let node_hash = status
-                    .pointer("/node_tip/blockhash")
-                    .and_then(|h| h.as_str());
                 let fully = status.get("fully_synced_height").and_then(|h| h.as_u64());
                 if !locked
-                    && wallet_height.is_some()
-                    && wallet_height == node_height
-                    && wallet_hash.is_some()
-                    && wallet_hash == node_hash
-                    && fully == wallet_height
+                    && wallet_height == Some(u64::from(height))
+                    && fully == Some(u64::from(height))
+                    && wallet_hash.is_some_and(|hash| hash.eq_ignore_ascii_case(block_hash))
                 {
                     return Ok(());
                 }
             }
             if Instant::now() >= deadline {
-                bail!("zallet did not reach the canonical tip within {timeout:?}");
+                bail!(
+                    "zallet did not reach canonical height {height} ({block_hash}) within {timeout:?}"
+                );
             }
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
