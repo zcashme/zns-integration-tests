@@ -85,6 +85,7 @@ async fn smoke(stack: &mut Stack) -> Result<()> {
 /// A refund admitted for the tip payment is dropped with that block.
 /// The same raw transaction, mined on the new chain, is refunded once.
 async fn refunds(stack: &mut Stack) -> Result<()> {
+    sync_wallet(stack).await?;
     let memo = format!("ZNS:claim:forever:{REFUND_NAME}:{}", stack.user.ua);
     let txid = stack.user.pay_treasury_amount(&memo, REFUND_ZEC).await?;
     eprintln!("refund payment {txid}");
@@ -124,8 +125,8 @@ async fn refunds(stack: &mut Stack) -> Result<()> {
         tail(log, mark).contains("payment refund") && tail(log, mark).contains(&txid)
     })
     .await?;
-    // Built on the pass after the payment's block, then left in the mempool
-    // for the block after that.
+    // Built on the pass after the payment's block. `submitted` is Zebra
+    // accepting that transaction; the next block mines it.
     stack.zebra.generate_blocks(1).await?;
     wait_for(stack, DECIDE_TIMEOUT, "refund replay built", false, |log| {
         !refund_txids(tail(log, mark), &txid).is_empty()
@@ -139,6 +140,10 @@ async fn refunds(stack: &mut Stack) -> Result<()> {
         );
     }
     let refund_txid = built[0].clone();
+    wait_for(stack, DECIDE_TIMEOUT, "refund submitted", false, |log| {
+        refund_submitted(tail(log, mark), &refund_txid)
+    })
+    .await?;
     stack.zebra.generate_blocks(1).await?;
     let refund_height = wait_tx_height(stack, &refund_txid).await?;
     let tip = stack.zebra.tip_height().await?;
@@ -292,15 +297,8 @@ async fn orphan_payment(
         bail!("orphaned {name} note {} is still canonical", note.txid);
     }
     wait_state(stack, name, None, DECIDE_TIMEOUT).await?;
-    // The reclaim spends a shielded note. The wallet tip must be Zebra's
-    // current block, with a claim payment spendable.
-    let tip = stack.zebra.tip_height().await?;
-    let hash = stack.zebra.block_hash(tip).await?;
-    stack
-        .user
-        .zallet
-        .wait_until_canonical(tip, &hash, SCAN_TIMEOUT)
-        .await?;
+    sync_wallet(stack).await?;
+    // A claim payment has to be spendable before the reclaim send.
     stack
         .user
         .zallet
@@ -351,6 +349,7 @@ async fn otp_wipe(stack: &mut Stack, name: &str) -> Result<()> {
         bail!("otp reorg dropped the update payment {pay}");
     }
     wait_state(stack, name, None, DECIDE_TIMEOUT).await?;
+    sync_wallet(stack).await?;
 
     let echo = format!("ZNS:otp:{code}:{name}:update:{}", stack.user.ua);
     let echo_mark = stack.mint.log_text().len();
@@ -362,12 +361,12 @@ async fn otp_wipe(stack: &mut Stack, name: &str) -> Result<()> {
         tail(log, echo_mark).contains("payment refund") && tail(log, echo_mark).contains(&echo_txid)
     })
     .await?;
-    // `scanned to tip` is logged before a Name Note is submitted. The next
-    // block is scanned only after that submission attempt has finished.
-    wait_scanned(stack, echo_height, echo_mark).await?;
-    stack.zebra.generate_blocks(1).await?;
-    let after = stack.zebra.tip_height().await?;
-    wait_scanned_within(stack, after, echo_mark, SETTLE_TIMEOUT).await?;
+    // `mint rules applied at canonical tip` is logged after Name Note
+    // submission for that tip. Proving runs inside that pass.
+    wait_for(stack, SETTLE_TIMEOUT, "rules applied", false, |log| {
+        rules_reached(tail(log, echo_mark), echo_height)
+    })
+    .await?;
     if submitted_txid(tail(&stack.mint.log_text(), echo_mark), name, "update").is_some() {
         bail!("stale OTP authorized an update of {name}");
     }
@@ -549,8 +548,7 @@ async fn wait_scanned(stack: &mut Stack, height: u32, since: usize) -> Result<()
     wait_scanned_within(stack, height, since, SCAN_TIMEOUT).await
 }
 
-/// [`wait_scanned`] with an explicit timeout. The stale-OTP follow-up
-/// scan waits through Name Note proving.
+/// [`wait_scanned`] bounded by `timeout`.
 async fn wait_scanned_within(
     stack: &mut Stack,
     height: u32,
@@ -619,6 +617,18 @@ async fn wait_for(
     }
 }
 
+/// Wallet tip height and block hash are Zebra's current block, and the
+/// wallet is unlocked and fully synced there.
+async fn sync_wallet(stack: &mut Stack) -> Result<()> {
+    let tip = stack.zebra.tip_height().await?;
+    let hash = stack.zebra.block_hash(tip).await?;
+    stack
+        .user
+        .zallet
+        .wait_until_canonical(tip, &hash, SCAN_TIMEOUT)
+        .await
+}
+
 fn ensure_running(stack: &mut Stack) -> Result<()> {
     if stack.mint.is_running() {
         Ok(())
@@ -629,6 +639,23 @@ fn ensure_running(stack: &mut Stack) -> Result<()> {
 
 fn refund_built(log: &str, payment: &str) -> bool {
     !refund_txids(log, payment).is_empty()
+}
+
+fn refund_submitted(log: &str, txid: &str) -> bool {
+    log.lines().any(|line| {
+        let line = strip_ansi(line);
+        line.contains("submitted") && line.contains(txid) && field_is(&line, "what", "refund")
+    })
+}
+
+/// A rules pass at `height` or above has finished. Name Note submission for
+/// that pass is already in the log.
+fn rules_reached(log: &str, height: u32) -> bool {
+    log.lines().any(|line| {
+        let line = strip_ansi(line);
+        line.contains("mint rules applied at canonical tip")
+            && field_u32(&line, "height").is_some_and(|applied| applied >= height)
+    })
 }
 
 /// Refund transaction ids logged for `payment`, one per `refund built` line.
@@ -701,7 +728,18 @@ fn log_fatal(log: &str) -> bool {
 }
 
 fn has_action(line: &str, action: &str) -> bool {
-    line.contains(&format!("action={action}")) || line.contains(&format!("action=\"{action}\""))
+    field_is(line, "action", action)
+}
+
+fn field_is(line: &str, key: &str, value: &str) -> bool {
+    let Some(rest) = line.split(&format!("{key}=")).nth(1) else {
+        return false;
+    };
+    let got = rest
+        .split(|c: char| c.is_whitespace() || c == ',')
+        .next()
+        .unwrap_or("");
+    got.trim_matches('"') == value
 }
 
 fn field(line: &str, key: &str) -> Option<String> {
@@ -763,7 +801,9 @@ INFO mint rewound to canonical ancestor height=214 hash=abcd\n\
 INFO scanned to tip height=220\n\
 INFO controller challenged txid=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb name=zcash action=\"update\"\n\
 INFO NameNote order sent txid=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa name=zcash action=\"claim\"\n\
-INFO refund built txid=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc payment=dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\n";
+INFO refund built txid=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc payment=dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\n\
+INFO submitted txid=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc what=\"refund\"\n\
+DEBUG mint rules applied at canonical tip height=220 hash=abcd\n";
         assert_eq!(rewind_height(log), Some(214));
         assert_eq!(scan_height(log), Some(220));
         let stale = "\
@@ -784,6 +824,9 @@ INFO mint rewound to canonical ancestor height=219\n";
         let payment = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
         let refund = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
         assert_eq!(refund_txids(log, payment), vec![refund.to_string()]);
+        assert!(refund_submitted(log, refund));
+        assert!(rules_reached(log, 220));
+        assert!(!rules_reached(log, 221));
         let twice = format!("{log}{log}");
         assert_eq!(refund_txids(&twice, payment).len(), 2);
     }

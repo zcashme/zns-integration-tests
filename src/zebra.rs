@@ -216,7 +216,7 @@ impl Zebrad {
     /// the mempool.
     pub async fn raw_transaction(&self, txid: &str) -> Result<String> {
         let tx = self
-            .rpc("getrawtransaction", json!([txid, false]))
+            .rpc("getrawtransaction", json!([txid, 0]))
             .await
             .with_context(|| format!("getrawtransaction {txid}"))?;
         tx.as_str()
@@ -224,8 +224,8 @@ impl Zebrad {
             .ok_or_else(|| anyhow!("getrawtransaction {txid} was not hex: {tx}"))
     }
 
-    /// Broadcast a signed transaction. A transaction already in the mempool
-    /// is success: the caller is about to mine it.
+    /// Broadcast a signed transaction. Zebra's duplicate-mempool answer,
+    /// `transaction already exists in mempool`, is success: the caller mines it.
     pub async fn submit_raw(&self, raw_hex: &str) -> Result<()> {
         match self.rpc("sendrawtransaction", json!([raw_hex])).await {
             Ok(_) => Ok(()),
@@ -233,7 +233,7 @@ impl Zebrad {
                 if error
                     .to_string()
                     .to_ascii_lowercase()
-                    .contains("already in") =>
+                    .contains("transaction already exists in mempool") =>
             {
                 Ok(())
             }
