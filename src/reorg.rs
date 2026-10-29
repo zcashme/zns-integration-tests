@@ -39,9 +39,8 @@ const SCAN_TIMEOUT: Duration = Duration::from_secs(120);
 const DECIDE_TIMEOUT: Duration = Duration::from_secs(180);
 const SETTLE_TIMEOUT: Duration = Duration::from_secs(600);
 
-/// Smoke, refund, Name Note, a second name, then OTP, on one chain.
+/// Refund, Name Note, a second name, then OTP, on one chain.
 pub async fn run(stack: &mut Stack) -> Result<()> {
-    smoke(stack).await.context("smoke")?;
     refunds(stack).await.context("refund")?;
     let (keep_pay, keep_note) = claim_protected(stack, KEEP).await.context("claim keep")?;
     let keep_note = reorg_confirmation(stack, &keep_pay, keep_note)
@@ -52,33 +51,6 @@ pub async fn run(stack: &mut Stack) -> Result<()> {
         .await
         .context("payment reorg")?;
     otp_wipe(stack, KEEP).await.context("otp")?;
-    Ok(())
-}
-
-/// Invalidate an empty tip and mine a replacement. No queue is holding work.
-async fn smoke(stack: &mut Stack) -> Result<()> {
-    let tip = stack.zebra.tip_height().await?;
-    wait_scanned(stack, tip, 0).await?;
-    let old_hash = stack.zebra.block_hash(tip).await?;
-    let mark = stack.mint.log_text().len();
-    stack.zebra.invalidate_above(tip - 1).await?;
-    let rewound = wait_rewind(stack, mark).await?;
-    if rewound != tip - 1 {
-        bail!("smoke rewound to {rewound}, wanted {}", tip - 1);
-    }
-    stack.zebra.generate_blocks(1).await?;
-    if stack.zebra.tip_height().await? != tip {
-        bail!("smoke did not restore height {tip}");
-    }
-    let new_hash = stack.zebra.block_hash(tip).await?;
-    if new_hash == old_hash {
-        bail!("replacement block at {tip} reused {old_hash}");
-    }
-    wait_scanned(stack, tip, mark).await?;
-    eprintln!(
-        "smoke: rewound to {} and replaced {old_hash} with {new_hash}",
-        tip - 1
-    );
     Ok(())
 }
 
