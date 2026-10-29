@@ -1,5 +1,6 @@
 # Lint and unit-test this crate on pull requests and on main. Once a day,
-# and on a manual run, also build mint and the resolver from their master tips.
+# and on a manual run, also build mint and the resolver from their master tips
+# and run the live reorg test.
 name: CI
 
 on:
@@ -95,3 +96,103 @@ jobs:
       - name: Build zns-resolver
         working-directory: zns-resolver
         run: cargo build --locked --bin zns-resolver --no-default-features --features testnet
+
+  # Same zebrad and zallet pins as zns-mint's e2e.
+  reorg:
+    name: reorg
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: zvs
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Checkout zns-mint
+        uses: actions/checkout@v4
+        with:
+          repository: zcashme/zns-mint
+          ref: master
+          path: zns-mint
+
+      - name: Checkout zallet
+        uses: actions/checkout@v4
+        with:
+          repository: zcash/zallet
+          ref: v0.1.0-beta.3
+          path: zallet
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+      # Build artifacts persist on the runner, outside the workspace, so a
+      # later checkout does not wipe them.
+      - name: Prepare runner-local caches
+        run: |
+          mkdir -p "$ZVS_CACHE/zebrad-6.3.0" "$ZVS_CACHE/target" "$ZVS_CACHE/params"
+          if [ ! -x "$ZVS_CACHE/zebrad-6.3.0/zebrad" ]; then
+            cd "$ZVS_CACHE/zebrad-6.3.0"
+            base="https://github.com/ZcashFoundation/zebra/releases/download/v6.3.0"
+            asset="zebrad-6.3.0-x86_64-unknown-linux-gnu.tar.gz"
+            curl -fsSL -O "$base/$asset" -O "$base/$asset.sha256"
+            sha256sum -c "$asset.sha256"
+            tar -xzf "$asset"
+            find . -maxdepth 3 -type f -name zebrad -exec mv {} ./zebrad \;
+            chmod +x ./zebrad
+          fi
+          cd "${{ github.workspace }}"
+          for p in sapling-spend.params sapling-output.params; do
+            if [ ! -f "$ZVS_CACHE/params/$p" ]; then
+              curl -L --fail -o "$ZVS_CACHE/params/$p" "https://download.z.cash/downloads/$p"
+            fi
+          done
+        env:
+          ZVS_CACHE: ${{ runner.workspace }}/../zvs-cache
+
+      - name: Export binary paths
+        run: |
+          echo "ZEBRAD_BIN=${{ runner.workspace }}/../zvs-cache/zebrad-6.3.0/zebrad" >> "$GITHUB_ENV"
+          echo "ZCASH_PARAMS_DIR=${{ runner.workspace }}/../zvs-cache/params" >> "$GITHUB_ENV"
+
+      - name: Build zallet (zebra backend)
+        working-directory: zallet/backends/zebra
+        env:
+          CARGO_TARGET_DIR: ${{ runner.workspace }}/../zvs-cache/zallet-target
+        run: |
+          cargo build --locked --release
+          cp -f "${{ runner.workspace }}/../zvs-cache/zallet-target/release/zallet-zebra" "${{ runner.workspace }}/../zvs-cache/zallet-zebra-v0.1.0-beta.3"
+
+      - name: Export zallet binary path
+        run: |
+          echo "ZALLET_BIN=${{ runner.workspace }}/../zvs-cache/zallet-zebra-v0.1.0-beta.3" >> "$GITHUB_ENV"
+
+      # Private 127.0.0.1 so the harness ports cannot collide with another
+      # job on this runner. Outbound HTTPS still works for the mint's
+      # pre-sale fetch.
+      - name: Install rootlesskit
+        run: |
+          if ! command -v rootlesskit >/dev/null || ! command -v slirp4netns >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y rootlesskit slirp4netns
+          fi
+
+      - name: Build mint for reorg
+        working-directory: zns-mint
+        env:
+          CARGO_TARGET_DIR: ${{ runner.workspace }}/../zvs-cache/target-reorg-mint
+        run: |
+          cargo \
+            --config profile.dev.package.orchard.opt-level=3 \
+            --config profile.dev.package.halo2_proofs.opt-level=3 \
+            --config profile.dev.package.halo2_gadgets.opt-level=3 \
+            build --locked --bin zns-mint --features regtest
+          test -x "$CARGO_TARGET_DIR/debug/zns-mint"
+          echo "ZNS_MINT_BIN=$CARGO_TARGET_DIR/debug/zns-mint" >> "$GITHUB_ENV"
+
+      - name: reorg queues
+        env:
+          CARGO_TARGET_DIR: ${{ runner.workspace }}/../zvs-cache/target-reorg
+        run: |
+          rootlesskit --net=slirp4netns --copy-up=/etc --disable-host-loopback \
+            cargo test --locked --test reorg -- --nocapture

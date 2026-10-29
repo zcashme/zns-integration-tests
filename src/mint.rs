@@ -123,6 +123,30 @@ impl Mint {
             tokio::time::sleep(Duration::from_millis(500)).await;
         }
     }
+
+    /// `zns_mint_request_state` for `name` on the metrics endpoint.
+    ///
+    /// `Some(1)` — the mint holds the next move (a pending request, an
+    /// unrelayed challenge, or a Name Note not yet seen). `Some(2)` — a
+    /// relayed challenge is waiting for the owner's code. `None` — the
+    /// name is idle. Refunds are not on this gauge. The value is whatever
+    /// the previous pass published.
+    pub async fn request_state(&self, name: &str) -> Result<Option<u8>> {
+        let body = reqwest::Client::builder()
+            .timeout(Duration::from_secs(5))
+            .build()
+            .context("metrics client")?
+            .get("http://127.0.0.1:9464/")
+            .send()
+            .await
+            .context("scrape mint metrics")?
+            .error_for_status()
+            .context("mint metrics status")?
+            .text()
+            .await
+            .context("read mint metrics")?;
+        Ok(parse_request_state(&body, name))
+    }
 }
 
 fn capsule_source() -> Option<PathBuf> {
@@ -134,4 +158,34 @@ fn capsule_source() -> Option<PathBuf> {
     }
     let sibling = sibling_dir("zns-mint").join("keys/zns_seed.capsule");
     sibling.is_file().then_some(sibling)
+}
+
+/// One sample of `zns_mint_request_state{name="..."}`.
+fn parse_request_state(body: &str, name: &str) -> Option<u8> {
+    let needle = format!("zns_mint_request_state{{name=\"{name}\"}}");
+    for line in body.lines() {
+        let line = line.trim();
+        if line.starts_with('#') || !line.starts_with(&needle) {
+            continue;
+        }
+        return line[needle.len()..].trim().parse().ok();
+    }
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn request_state_reads_one_gauge_sample() {
+        let body = "\
+# TYPE zns_mint_request_state gauge
+zns_mint_request_state{name=\"zcash\"} 2
+zns_mint_request_state{name=\"zebra\"} 1
+";
+        assert_eq!(parse_request_state(body, "zcash"), Some(2));
+        assert_eq!(parse_request_state(body, "zebra"), Some(1));
+        assert_eq!(parse_request_state(body, "alice"), None);
+    }
 }

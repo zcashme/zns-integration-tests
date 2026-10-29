@@ -10,7 +10,9 @@ description = "Cross-stack harness for ZNS: zebra, mint, resolver"
 [dependencies]
 anyhow = "1"
 hex = "0.4"
+hmac = "0.12.1"
 rand = "0.10"
+sha2 = "0.10.9"
 reqwest = { version = "0.13", default-features = false, features = ["json"] }
 secp256k1 = "0.33"
 serde = { version = "1", features = ["derive"] }
@@ -37,6 +39,9 @@ orchard = { git = "https://github.com/zcashme/orchard.git", tag = "zns-orchard-v
 zcash_primitives = { git = "https://github.com/zcashme/zns-zcash_primitives.git", tag = "zns-zcash_primitives-v0.31.0" }
 
 # Debug Halo2 is too slow for a 42-action Ironwood bundle.
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+
 [profile.dev.package.orchard]
 opt-level = 3
 [profile.dev.package.halo2_proofs]

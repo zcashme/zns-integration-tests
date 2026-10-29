@@ -202,6 +202,45 @@ impl Zallet {
         }
     }
 
+    /// Wait until the wallet is unlocked, fully synced, and its tip is
+    /// `height` with Zebra's `block_hash`.
+    pub async fn wait_until_canonical(
+        &self,
+        height: u32,
+        block_hash: &str,
+        timeout: Duration,
+    ) -> Result<()> {
+        let deadline = Instant::now() + timeout;
+        loop {
+            if let Ok(status) = self.call("getwalletstatus", json!([])).await {
+                let locked = status
+                    .get("locked")
+                    .and_then(|l| l.as_bool())
+                    .unwrap_or(true);
+                let wallet_height = status
+                    .pointer("/wallet_tip/height")
+                    .and_then(|h| h.as_u64());
+                let wallet_hash = status
+                    .pointer("/wallet_tip/blockhash")
+                    .and_then(|h| h.as_str());
+                let fully = status.get("fully_synced_height").and_then(|h| h.as_u64());
+                if !locked
+                    && wallet_height == Some(u64::from(height))
+                    && fully == Some(u64::from(height))
+                    && wallet_hash.is_some_and(|hash| hash.eq_ignore_ascii_case(block_hash))
+                {
+                    return Ok(());
+                }
+            }
+            if Instant::now() >= deadline {
+                bail!(
+                    "zallet did not reach canonical height {height} ({block_hash}) within {timeout:?}"
+                );
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+
     /// Poll until the wallet's coinbase-spendable view — `z_getbalances`'
     /// per-account `transparent.coinbase.spendable` bucket — reaches
     /// `expected_zats`, the node's total **mature** coinbase to the miner
